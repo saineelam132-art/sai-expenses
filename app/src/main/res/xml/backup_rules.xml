@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Pre-Android-12 backup rules. Excludes the local database and DataStore prefs from Android's
+default auto-backup — this app's privacy model is "nothing leaves the device unless the user
+explicitly runs the encrypted export in Settings", so we don't want stock cloud backup silently
+uploading transaction history to the user's Google account.
+-->
+<full-backup-content>
+    <exclude domain="database" path="." />
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="file" path="." />
+</full-backup-content>
