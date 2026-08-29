@@ -7,10 +7,14 @@ import com.expensetracker.core.parser.ParseUtils
 import com.expensetracker.core.parser.TransactionParser
 
 /**
- * Covers SBI's two common templates:
+ * Covers several real-world SBI templates:
  *  "Rs.500.00 debited from A/c XX1234 on 05-08-24 transfer to MOHAN SHOP Ref No 123456789012 -SBI"
- *  "A/C X1234 debited by 500.0 on date 05Aug24 trf to Mohan Shop Refno 123456789012 -SBI"
+ *  "Dear UPI user A/C X2436 debited by 5.00 on date 26Aug26 trf to BODDU KOUSALYA D Refno ...-SBI"
+ *    (note: bare amount, no Rs./INR prefix, and a single-X account mask)
  *  "Rs.5000.00 credited to A/c XX1234 on 05-08-24 by transfer from EMPLOYER LTD Ref No ... -SBI"
+ *  "Your a/c no. XXXXXXXX2436 is credited by Rs.2901.51 on 30-06-26 by a/c linked to mobile
+ *    6XXXXXX111-GROWW INVE (IMPS Ref# 618117321894)-SBI" (credit via IMPS from a linked mobile,
+ *    no "from <name>" phrasing — the payer name sits between the mobile number and "(IMPS")
  */
 class SbiParser : TransactionParser {
     override val sourceLabel = "SBI"
@@ -24,6 +28,10 @@ class SbiParser : TransactionParser {
     )
     private val merchantCredit = Regex(
         """from\s+([A-Za-z0-9 &.'\-]+?)\s+Ref""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val merchantCreditImps = Regex(
+        """-([A-Za-z0-9 &.'\-]+?)\s*\((?:IMPS|NEFT|RTGS|NECS)""",
         RegexOption.IGNORE_CASE,
     )
 
@@ -42,6 +50,7 @@ class SbiParser : TransactionParser {
             merchantDebit.find(message)?.groupValues?.get(1)
         } else {
             merchantCredit.find(message)?.groupValues?.get(1)
+                ?: merchantCreditImps.find(message)?.groupValues?.get(1)
         }
 
         return ParsedTransaction(

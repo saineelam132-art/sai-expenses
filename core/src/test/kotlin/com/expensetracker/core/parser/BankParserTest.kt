@@ -158,4 +158,58 @@ class BankParserTest {
         assertNotNull(result.amount)
         assertTrue(result.amount!! >= BigDecimal("5000"))
     }
+
+    // --- Real-world messages below (captured from actual devices, personal names swapped for
+    // placeholders) that surfaced format-drift gaps in the original six-bank/app coverage. ---
+
+    @Test
+    fun `APGB debit with VPA merchant containing at-sign`() {
+        val msg = "Your a/c no. XXXXXXXXXXX3077 is debited for Rs.60.00 on 01/08/2026 17:08:19 and credited to VPA ombk.dqracv567083b67temfrr@mbk (UPI Ref no 192015211858) -APGBank"
+        val result = registry.parse(msg, sender = "JD-APGB-T")!!
+        assertEquals(BigDecimal("60.00"), result.amount)
+        assertEquals(TransactionType.DEBIT, result.type)
+        assertEquals("ombk.dqracv567083b67temfrr@mbk", result.merchant)
+        assertEquals("3077", result.accountHint)
+        assertEquals("APGB", result.sourceLabel)
+    }
+
+    @Test
+    fun `SBI UPI-user debit with bare amount (no currency prefix) and single-X account mask`() {
+        val msg = "Dear UPI user A/C X2436 debited by 5.00 on date 26Aug26 trf to JOHN DOE Refno 181829650372 If not u? call-1800111109 for other services-18001234-SBI"
+        val result = registry.parse(msg, sender = "VA-SBIUPI-S")!!
+        assertEquals(BigDecimal("5.00"), result.amount)
+        assertEquals(TransactionType.DEBIT, result.type)
+        assertEquals("JOHN DOE", result.merchant)
+        assertEquals("2436", result.accountHint)
+    }
+
+    @Test
+    fun `SBI credit via IMPS from a mobile-linked account (no 'from name' phrasing)`() {
+        val msg = "Dear Customer, Your a/c no. XXXXXXXX2436 is credited by Rs.2901.51 on 30-06-26 by a/c linked to mobile 6XXXXXX111-GROWW INVE (IMPS Ref# 618117321894)-SBI"
+        val result = registry.parse(msg, sender = "JK-SBIPSG-T")!!
+        assertEquals(BigDecimal("2901.51"), result.amount)
+        assertEquals(TransactionType.CREDIT, result.type)
+        assertEquals("GROWW INVE", result.merchant)
+    }
+
+    @Test
+    fun `slice debit uses 'sent to' phrasing not covered by the generic fallback`() {
+        val msg = "Rs. 1,200 sent from a/c xx7003 on 19-Jul-26 to PHYSICSWALLAH (UPI Ref: 620008432795). Not you? Call 08048329999 - slice"
+        val result = registry.parse(msg, sender = "VA-SLCBNK-S")!!
+        assertEquals(BigDecimal("1200"), result.amount)
+        assertEquals(TransactionType.DEBIT, result.type)
+        assertEquals("PHYSICSWALLAH", result.merchant)
+        assertEquals("7003", result.accountHint)
+        assertEquals("slice", result.sourceLabel)
+    }
+
+    @Test
+    fun `slice credit via IMPS with balance field using dotted Avl Bal punctuation`() {
+        val msg = "Rs. 2,000 received in A/c xx7003 on 25-Aug-26 from NORTH EAST SMALL FINANCE BANK via IMPS (Ref ID: 623701181758). Avl. Bal. Rs. 2,000.05 - slice"
+        val result = registry.parse(msg, sender = "VA-SLCBNK-S")!!
+        assertEquals(BigDecimal("2000"), result.amount)
+        assertEquals(TransactionType.CREDIT, result.type)
+        assertEquals("NORTH EAST SMALL FINANCE BANK", result.merchant)
+        assertEquals(BigDecimal("2000.05"), result.availableBalance)
+    }
 }

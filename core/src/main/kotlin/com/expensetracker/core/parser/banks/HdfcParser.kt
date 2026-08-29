@@ -17,8 +17,8 @@ class HdfcParser : TransactionParser {
     private val bankIdentifier = Regex("""HDFC""", RegexOption.IGNORE_CASE)
     private val debitKeyword = Regex("""\bdebited\b""", RegexOption.IGNORE_CASE)
     private val creditKeyword = Regex("""\bcredited\b""", RegexOption.IGNORE_CASE)
-    private val vpaDebit = Regex("""to\s+VPA\s+([\w.\-]+@[\w.\-]+)""", RegexOption.IGNORE_CASE)
-    private val vpaCredit = Regex("""from\s+VPA\s+([\w.\-]+@[\w.\-]+)""", RegexOption.IGNORE_CASE)
+    private val vpaDebit = Regex("""to\s+VPA\s+(${ParseUtils.VPA_PATTERN})""", RegexOption.IGNORE_CASE)
+    private val vpaCredit = Regex("""from\s+VPA\s+(${ParseUtils.VPA_PATTERN})""", RegexOption.IGNORE_CASE)
     private val plainMerchantDebit = Regex(
         """to\s+([A-Za-z0-9 &.'\-]+?)\s*(?:on|\()""",
         RegexOption.IGNORE_CASE,

@@ -19,7 +19,7 @@ class IciciParser : TransactionParser {
     private val debitKeyword = Regex("""\bdebited\b""", RegexOption.IGNORE_CASE)
     private val creditKeyword = Regex("""\bcredited\b""", RegexOption.IGNORE_CASE)
     private val merchantAfterSemicolon = Regex(""";\s*([A-Za-z0-9 &.'\-]+?)\s+credited""", RegexOption.IGNORE_CASE)
-    private val merchantCreditedTo = Regex("""credited\s+to\s+([\w.\-@]+)""", RegexOption.IGNORE_CASE)
+    private val merchantCreditedTo = Regex("""credited\s+to\s+(${ParseUtils.VPA_PATTERN})""", RegexOption.IGNORE_CASE)
     private val merchantFrom = Regex("""from\s+([A-Za-z0-9 &.'\-@]+?)\s*\(""", RegexOption.IGNORE_CASE)
 
     override fun tryParse(message: String, sender: String?): ParsedTransaction? {

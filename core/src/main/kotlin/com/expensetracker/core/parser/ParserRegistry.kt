@@ -1,11 +1,13 @@
 package com.expensetracker.core.parser
 
+import com.expensetracker.core.parser.banks.ApgbParser
 import com.expensetracker.core.parser.banks.AxisParser
 import com.expensetracker.core.parser.banks.GenericFallbackParser
 import com.expensetracker.core.parser.banks.HdfcParser
 import com.expensetracker.core.parser.banks.IciciParser
 import com.expensetracker.core.parser.banks.KotakParser
 import com.expensetracker.core.parser.banks.SbiParser
+import com.expensetracker.core.parser.banks.SliceParser
 import com.expensetracker.core.parser.banks.UpiAppNotificationParser
 import com.expensetracker.core.model.ParsedTransaction
 
@@ -35,6 +37,8 @@ class ParserRegistry(private val parsers: List<TransactionParser> = defaultParse
             IciciParser(),
             AxisParser(),
             KotakParser(),
+            ApgbParser(),
+            SliceParser(),
             UpiAppNotificationParser(),
             GenericFallbackParser(),
         )
