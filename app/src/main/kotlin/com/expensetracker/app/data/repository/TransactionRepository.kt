@@ -25,9 +25,10 @@ class TransactionRepository(
         val categorization = categoryEngine.categorize(parsed.merchant)
         val accountId = accountIdFor(parsed)
 
-        val isLarge = parsed.amount != null &&
+        val amount = parsed.amount
+        val isLarge = amount != null &&
             parsed.type == TransactionType.DEBIT &&
-            parsed.amount >= largeTransactionThreshold
+            amount >= largeTransactionThreshold
 
         val entity = TransactionEntity(
             amount = parsed.amount,
