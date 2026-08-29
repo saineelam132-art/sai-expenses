@@ -30,10 +30,28 @@ class GenericFallbackParser : TransactionParser {
         """\b(credited|received|deposit\s*of|credit\s*of)\b""",
         RegexOption.IGNORE_CASE,
     )
-    private val merchantGuess = Regex(
-        """\b(?:at|to|from|towards)\s+([A-Za-z0-9 &.'\-]{2,40}?)(?:\s+on\b|\s+for\b|[.,;]|$)""",
+    // Tried in priority order: "at"/"to"/"towards" reliably introduce the actual payee in most
+    // bank phrasing, while "from" is just as likely to precede boilerplate ("debited from your
+    // account") as an actual sender name — so it's tried last, and its boilerplate matches
+    // ("your account", "your a/c") are rejected outright rather than stored as a fake merchant.
+    private val merchantGuessPatterns = listOf(
+        Regex("""\bat\s+([A-Za-z0-9 &.'\-]{2,40}?)(?:\s+on\b|\s+for\b|[.,;]|$)""", RegexOption.IGNORE_CASE),
+        Regex("""\bto\s+([A-Za-z0-9 &.'\-]{2,40}?)(?:\s+on\b|\s+for\b|[.,;]|$)""", RegexOption.IGNORE_CASE),
+        Regex("""\btowards\s+([A-Za-z0-9 &.'\-]{2,40}?)(?:\s+on\b|\s+for\b|[.,;]|$)""", RegexOption.IGNORE_CASE),
+        Regex("""\bfrom\s+([A-Za-z0-9 &.'\-]{2,40}?)(?:\s+on\b|\s+for\b|[.,;]|$)""", RegexOption.IGNORE_CASE),
+    )
+    private val boilerplateMerchant = Regex(
+        """^(your|the)\s+(a/?c|account|bank\s*account)\b""",
         RegexOption.IGNORE_CASE,
     )
+
+    private fun guessMerchant(message: String): String? {
+        for (pattern in merchantGuessPatterns) {
+            val candidate = pattern.find(message)?.groupValues?.get(1) ?: continue
+            if (!boilerplateMerchant.containsMatchIn(candidate.trim())) return candidate
+        }
+        return null
+    }
 
     override fun tryParse(message: String, sender: String?): ParsedTransaction? {
         if (excludeKeywords.containsMatchIn(message)) return null
@@ -52,7 +70,7 @@ class GenericFallbackParser : TransactionParser {
         return ParsedTransaction(
             amount = amount,
             type = type,
-            merchant = ParseUtils.cleanMerchant(merchantGuess.find(message)?.groupValues?.get(1)),
+            merchant = ParseUtils.cleanMerchant(guessMerchant(message)),
             dateTime = ParseUtils.findDate(message),
             availableBalance = ParseUtils.findBalance(message),
             accountHint = ParseUtils.findAccountHint(message),

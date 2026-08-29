@@ -122,6 +122,13 @@ class BankParserTest {
     }
 
     @Test
+    fun `generic fallback prefers the real merchant after 'at' over 'your account' boilerplate`() {
+        val msg = "Rs. 2500.00 debited from your account for a purchase at CITY ELECTRONICS on 29-08-26"
+        val result = registry.parse(msg, sender = "XX-UNKNWN")!!
+        assertEquals("CITY ELECTRONICS", result.merchant)
+    }
+
+    @Test
     fun `unparsed transaction-like message flagged for review not dropped`() {
         val msg = "Your account has been debited. Contact bank for details."
         val result = registry.parse(msg, sender = "XX-UNKNWN")!!
