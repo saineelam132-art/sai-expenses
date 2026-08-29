@@ -31,14 +31,18 @@ data class DashboardUiState(
 
 class DashboardViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
 
+    // Must be declared (and thus initialized) before `uiState` below — buildState() reads this
+    // property while constructing uiState's Flow, and Kotlin initializes properties in source
+    // order. Declaring it after uiState would leave its backing field null at that point (a
+    // silent runtime NPE inside combine(), not a compile error).
+    private val recurring = MutableStateFlow<List<RecurringPayment>>(emptyList())
+
     val uiState: StateFlow<DashboardUiState> = buildState()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardUiState())
 
     init {
         viewModelScope.launch { loadRecurringPayments() }
     }
-
-    private val recurring = MutableStateFlow<List<RecurringPayment>>(emptyList())
 
     private suspend fun loadRecurringPayments() {
         val repeated = app.database.transactionDao().getRepeatedMerchantAmounts()
