@@ -6,6 +6,7 @@ import androidx.room.Query
 import androidx.room.Update
 import com.expensetracker.core.model.Category
 import kotlinx.coroutines.flow.Flow
+import java.math.BigDecimal
 
 data class SectorSpend(val category: Category, val total: Double)
 
