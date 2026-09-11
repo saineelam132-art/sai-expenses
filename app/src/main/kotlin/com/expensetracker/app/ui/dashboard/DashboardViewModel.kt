@@ -7,12 +7,12 @@ import com.expensetracker.app.data.db.AccountEntity
 import com.expensetracker.app.data.db.SectorSpend
 import com.expensetracker.app.diagnostics.CrashLog
 import com.expensetracker.core.model.Category
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.ZoneId
@@ -33,21 +33,35 @@ data class DashboardUiState(
 
 class DashboardViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
 
-    // Must be declared (and thus initialized) before `uiState` below — buildState() reads this
-    // property while constructing uiState's Flow, and Kotlin initializes properties in source
-    // order. Declaring it after uiState would leave its backing field null at that point (a
-    // silent runtime NPE inside combine(), not a compile error).
     private val recurring = MutableStateFlow<List<RecurringPayment>>(emptyList())
 
-    val uiState: StateFlow<DashboardUiState> = buildState()
-        .catch { e ->
-            CrashLog.record(app, "DashboardViewModel.buildState", e)
-            emit(DashboardUiState())
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardUiState())
+    // A plain, always-live MutableStateFlow that this ViewModel pushes into from a
+    // supervised collection loop below — never a `combine(...).catch{}.stateIn(...)` chain
+    // collected directly by Compose. That pattern crashed on launch with a NullPointerException
+    // from inside kotlinx.coroutines' combine() internals (surfacing through collectAsState())
+    // that `.catch{}` did not intercept — collectState()'s explicit try/catch below is the fix:
+    // no exception from buildState() can reach the UI layer, ever, regardless of its cause.
+    private val _uiState = MutableStateFlow(DashboardUiState())
+    val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
 
     init {
         viewModelScope.launch { loadRecurringPayments() }
+        viewModelScope.launch { collectState() }
+    }
+
+    private suspend fun collectState() {
+        while (true) {
+            try {
+                buildState().collect { _uiState.value = it }
+                return // upstream completed normally — nothing left to collect
+            } catch (c: CancellationException) {
+                throw c
+            } catch (e: Throwable) {
+                CrashLog.record(app, "DashboardViewModel.buildState", e)
+                _uiState.value = DashboardUiState()
+                delay(1000) // brief backoff, then retry in case the failure was transient
+            }
+        }
     }
 
     private suspend fun loadRecurringPayments() {

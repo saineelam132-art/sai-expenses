@@ -5,11 +5,13 @@ import androidx.lifecycle.viewModelScope
 import com.expensetracker.app.ExpenseTrackerApp
 import com.expensetracker.app.data.db.LedgerSide
 import com.expensetracker.app.diagnostics.CrashLog
-import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 data class BalanceSheetRow(val name: String, val balance: Double)
 
@@ -21,7 +23,35 @@ data class BalanceSheetUiState(
 
 class BalanceSheetViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
 
-    val uiState: StateFlow<BalanceSheetUiState> = combine(
+    // A plain, always-live MutableStateFlow that this ViewModel pushes into from a supervised
+    // collection loop, rather than exposing a `combine(...).catch{}.stateIn(...)` chain directly
+    // to Compose — that pattern crashed on launch with a NullPointerException from inside
+    // kotlinx.coroutines' combine() internals (surfacing through collectAsState()) that
+    // `.catch{}` did not intercept. collectState()'s explicit try/catch is the fix: no exception
+    // from buildState() can reach the UI layer, ever, regardless of its cause.
+    private val _uiState = MutableStateFlow(BalanceSheetUiState())
+    val uiState: StateFlow<BalanceSheetUiState> = _uiState.asStateFlow()
+
+    init {
+        viewModelScope.launch { collectState() }
+    }
+
+    private suspend fun collectState() {
+        while (true) {
+            try {
+                buildState().collect { _uiState.value = it }
+                return // upstream completed normally — nothing left to collect
+            } catch (c: CancellationException) {
+                throw c
+            } catch (e: Throwable) {
+                CrashLog.record(app, "BalanceSheetViewModel", e)
+                _uiState.value = BalanceSheetUiState()
+                delay(1000) // brief backoff, then retry in case the failure was transient
+            }
+        }
+    }
+
+    private fun buildState() = combine(
         app.database.accountDao().observeAll(),
         app.database.ledgerAccountDao().observeAll(),
     ) { bankAccounts, ledgerAccounts ->
@@ -43,9 +73,4 @@ class BalanceSheetViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
             netWorth = assets.sumOf { it.balance } - liabilityRows.sumOf { it.balance },
         )
     }
-        .catch { e ->
-            CrashLog.record(app, "BalanceSheetViewModel", e)
-            emit(BalanceSheetUiState())
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), BalanceSheetUiState())
 }
