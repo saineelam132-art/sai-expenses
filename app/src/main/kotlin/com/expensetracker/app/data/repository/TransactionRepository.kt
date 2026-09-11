@@ -59,6 +59,8 @@ class TransactionRepository(
             kind = inferred.kind,
             kindConfident = false,
             linkedContactId = inferred.contactId,
+            linkedLoanId = inferred.loanId,
+            needsReview = draft.needsReview || inferred.forceNeedsReview,
         )
         val id = transactionDao.insert(entity)
         val saved = entity.copy(id = id)
@@ -107,7 +109,15 @@ class TransactionRepository(
             kind = kind,
             kindConfident = true,
             linkedContactId = if (kind.requiresContact) contactId else null,
-            linkedLoanId = if (kind.requiresLoan) loanId else null,
+            // requiresLoan kinds get the newly-picked loan. A plain Expense that was already
+            // funded via a credit line (e.g. auto-inferred Slice spending) keeps that funding
+            // when re-confirmed as Expense, rather than silently losing its liability posting —
+            // any other kind clears it, since it no longer applies.
+            linkedLoanId = when {
+                kind.requiresLoan -> loanId
+                kind == TransactionKind.EXPENSE -> transaction.linkedLoanId
+                else -> null
+            },
             principalPortion = null,
             interestPortion = null,
         )

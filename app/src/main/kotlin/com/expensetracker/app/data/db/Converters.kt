@@ -123,4 +123,15 @@ class Converters {
                 null
             }
         }
+
+    @TypeConverter
+    fun recurringBillStatusToString(value: RecurringBillStatus): String = value.name
+
+    @TypeConverter
+    fun stringToRecurringBillStatus(value: String): RecurringBillStatus =
+        try {
+            RecurringBillStatus.valueOf(value)
+        } catch (_: IllegalArgumentException) {
+            RecurringBillStatus.ACTIVE
+        }
 }

@@ -27,6 +27,26 @@ class CategoryEngineTest {
     }
 
     @Test
+    fun `unresolved merchant VPAs with no human-readable name are flagged for review not guessed`() {
+        val engine = CategoryEngine()
+        // Real examples: no readable merchant name, and none should accidentally collide with an
+        // existing keyword substring (e.g. "grofers1paytm" must NOT match the "grofers" keyword —
+        // whole-word matching, not substring, is what prevents that false positive).
+        for (vpa in listOf("paytm.s1dm4e1@pty", "BHARATPE.90068516197@fbpe", "grofers1paytm@hdfcbank")) {
+            val result = engine.categorize(vpa)
+            assertEquals("$vpa should be uncategorized", Category.UNCATEGORIZED, result.category)
+            assertFalse("$vpa should not be confident", result.confident)
+        }
+    }
+
+    @Test
+    fun `learning a VPA once is remembered for future transactions`() {
+        val engine = CategoryEngine()
+        engine.correctCategory("grofers1paytm@hdfcbank", Category.GROCERIES)
+        assertEquals(Category.GROCERIES, engine.categorize("grofers1paytm@hdfcbank").category)
+    }
+
+    @Test
     fun `null merchant is uncategorized`() {
         val engine = CategoryEngine()
         val result = engine.categorize(null)

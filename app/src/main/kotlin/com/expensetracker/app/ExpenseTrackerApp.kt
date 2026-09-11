@@ -3,8 +3,13 @@ package com.expensetracker.app
 import android.app.Application
 import android.content.Context
 import com.expensetracker.app.accounting.LedgerPostingEngine
+import com.expensetracker.app.accounting.SLICE_LEDGER_ACCOUNT_ID
 import com.expensetracker.app.accounting.TypeInferenceEngine
 import com.expensetracker.app.data.db.AppDatabase
+import com.expensetracker.app.data.db.LedgerAccountCategory
+import com.expensetracker.app.data.db.LedgerAccountDao
+import com.expensetracker.app.data.db.LedgerAccountEntity
+import com.expensetracker.app.data.db.LedgerSide
 import com.expensetracker.app.data.repository.RoomMerchantRuleStore
 import com.expensetracker.app.data.repository.SettingsRepository
 import com.expensetracker.app.data.repository.TransactionRepository
@@ -18,6 +23,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.runBlocking
+import java.math.BigDecimal
 
 /**
  * Composition root. Everything here is built once at process start so the SMS receiver and
@@ -57,10 +63,16 @@ class ExpenseTrackerApp : Application() {
         // so the capture pipeline never races an empty cache.
         val keywordRules = runBlocking(Dispatchers.IO) {
             merchantRuleStore.preload()
+            ensureSliceLedgerAccountSeeded(database.ledgerAccountDao())
             loadOrSeedKeywordRules(database.keywordRuleDao())
         }
         categoryEngine = CategoryEngine(keywordRules, merchantRuleStore)
-        val typeInferenceEngine = TypeInferenceEngine(database.contactDao(), database.ledgerAccountDao(), database.transactionDao())
+        val typeInferenceEngine = TypeInferenceEngine(
+            database.contactDao(),
+            database.ledgerAccountDao(),
+            database.transactionDao(),
+            settingsRepository,
+        )
         val ledgerPostingEngine = LedgerPostingEngine(database.ledgerAccountDao(), database.contactDao(), database.transactionDao())
         transactionRepository = TransactionRepository(
             database.transactionDao(),
@@ -75,5 +87,25 @@ class ExpenseTrackerApp : Application() {
 
     companion object {
         fun from(context: Context): ExpenseTrackerApp = context.applicationContext as ExpenseTrackerApp
+    }
+}
+
+/**
+ * Slice is a credit line, not a real bank account — there's no SMS balance to seed it from, so
+ * unlike bank accounts it must exist before the first Slice transaction is posted, or
+ * [LedgerPostingEngine]'s "no linked loan yet — nothing to post" safety check (correct for a
+ * user-added loan that genuinely doesn't exist yet) would silently no-op every Slice posting too.
+ */
+private suspend fun ensureSliceLedgerAccountSeeded(ledgerAccountDao: LedgerAccountDao) {
+    if (ledgerAccountDao.getById(SLICE_LEDGER_ACCOUNT_ID) == null) {
+        ledgerAccountDao.upsert(
+            LedgerAccountEntity(
+                id = SLICE_LEDGER_ACCOUNT_ID,
+                name = "Slice",
+                side = LedgerSide.LIABILITY,
+                category = LedgerAccountCategory.LOAN,
+                balance = BigDecimal.ZERO,
+            ),
+        )
     }
 }

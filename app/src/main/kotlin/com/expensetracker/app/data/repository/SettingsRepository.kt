@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -37,10 +38,21 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[WEEKLY_SUMMARY_ENABLED] = enabled }
     }
 
+    /** Name variants that identify "this is me" as a payee — used to tell a Slice loan
+     * disbursement (sent to myself) apart from a Slice-funded payment to a merchant. */
+    val ownNameVariants: Flow<Set<String>> =
+        context.dataStore.data.map { it[OWN_NAME_VARIANTS] ?: DEFAULT_OWN_NAME_VARIANTS }
+
+    suspend fun setOwnNameVariants(names: Set<String>) {
+        context.dataStore.edit { it[OWN_NAME_VARIANTS] = names }
+    }
+
     companion object {
         const val DEFAULT_LARGE_TXN_THRESHOLD = 5000.0
+        val DEFAULT_OWN_NAME_VARIANTS = setOf("Neelam Sai Ram Ganesh", "Sai Ram Ganesh")
         private val LARGE_TXN_THRESHOLD = doublePreferencesKey("large_transaction_threshold")
         private val ENCRYPTED_BACKUP_ENABLED = booleanPreferencesKey("encrypted_backup_enabled")
         private val WEEKLY_SUMMARY_ENABLED = booleanPreferencesKey("weekly_summary_enabled")
+        private val OWN_NAME_VARIANTS = stringSetPreferencesKey("own_name_variants")
     }
 }

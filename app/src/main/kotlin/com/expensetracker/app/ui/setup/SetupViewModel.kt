@@ -37,6 +37,15 @@ class SetupViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
     val contacts: StateFlow<List<ContactEntity>> = app.database.contactDao().observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    /** Used to tell a Slice loan disbursement (sent to myself) apart from a Slice-funded payment
+     * to a merchant — see TypeInferenceEngine. */
+    val ownNameVariants: StateFlow<Set<String>> = app.settingsRepository.ownNameVariants
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
+
+    fun setOwnNameVariants(names: Set<String>) {
+        viewModelScope.launch { app.settingsRepository.setOwnNameVariants(names) }
+    }
+
     fun setCashBalance(amount: BigDecimal) {
         viewModelScope.launch {
             val existing = app.database.ledgerAccountDao().getCashBucket()

@@ -1,6 +1,7 @@
 package com.expensetracker.core.parser
 
 import java.math.BigDecimal
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeFormatterBuilder
@@ -53,7 +54,10 @@ internal object ParseUtils {
 
     fun findBalance(message: String): BigDecimal? {
         val balanceRegex = Regex(
-            """(?:Avl\s*Bal|Available\s*Balance|Bal)\.?:?\s*(?:Rs\.?|INR|₹)?\s?([0-9][0-9,]*(?:\.[0-9]{1,2})?)""",
+            // "A/c Balance is Rs.X" / "Balance is Rs.X" (APGB's credit format) need the literal
+            // "is" consumed as part of the label — without it, the gap between "Balance" and the
+            // amount ("...Balance is Rs.5000") stops the match right before the connective word.
+            """(?:Avl\.?\s*Bal|Available\s*Balance|A/c\s*Balance\s+is|Balance\s+is|Bal)\.?:?\s*(?:Rs\.?|INR|₹)?\s?([0-9][0-9,]*(?:\.[0-9]{1,2})?)""",
             RegexOption.IGNORE_CASE,
         )
         val match = balanceRegex.find(message) ?: return null
@@ -100,6 +104,18 @@ internal object ParseUtils {
             }
         }
         return null
+    }
+
+    /**
+     * Parses a bare 6-digit DDMMYY date (e.g. IPPB's "280626" = 28-Jun-26) with no separators.
+     * Not part of [findDate] — a bare 6-digit run is too ambiguous to search for generically
+     * across bank formats (reference numbers, etc. also look like this) — callers that know
+     * their message uses this exact shape extract the digits themselves first.
+     */
+    fun parseDdMMyy(raw: String): LocalDate? = try {
+        LocalDate.parse(raw, DateTimeFormatter.ofPattern("ddMMyy", Locale.ENGLISH))
+    } catch (_: Exception) {
+        null
     }
 
     /**

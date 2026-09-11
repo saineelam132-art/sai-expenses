@@ -63,9 +63,17 @@ class LedgerPostingEngine(
                 TransactionKind.I_REPAID_FRIEND -> adjustContactBucket(
                     transaction.linkedContactId, LedgerAccountCategory.PAYABLE, LedgerSide.LIABILITY, amount, -sign,
                 )
-                // Expense/Income/Self-Transfer only ever move bank balances, which the bank's own
-                // SMS already reports — nothing for this engine to post.
-                TransactionKind.EXPENSE, TransactionKind.INCOME, TransactionKind.SELF_TRANSFER -> Unit
+                // An Expense usually only ever moves a bank balance, which the bank's own SMS
+                // already reports — nothing to post. The exception is an expense funded via a
+                // credit line rather than a real bank account (e.g. Slice): linkedLoanId is set
+                // for those even though EXPENSE doesn't normally carry one (see InferredKind's
+                // docs), and increasing that liability *is* this engine's job.
+                TransactionKind.EXPENSE -> if (transaction.linkedLoanId != null) {
+                    adjustLoan(transaction.linkedLoanId, amount, sign)
+                }
+                // Income/Self-Transfer only ever move bank balances, which the bank's own SMS
+                // already reports — nothing for this engine to post.
+                TransactionKind.INCOME, TransactionKind.SELF_TRANSFER -> Unit
             }
         } catch (e: Exception) {
             CrashLog.record(context, "LedgerPostingEngine", e)

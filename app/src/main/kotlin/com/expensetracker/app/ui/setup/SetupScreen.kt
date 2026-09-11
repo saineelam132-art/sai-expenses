@@ -41,8 +41,20 @@ fun SetupScreen(factory: AppViewModelFactory) {
     val loans by viewModel.loans.collectAsState()
     val manualAssets by viewModel.manualAssets.collectAsState()
     val contacts by viewModel.contacts.collectAsState()
+    val ownNameVariants by viewModel.ownNameVariants.collectAsState()
 
     LazyColumn(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        item { SectionTitle("Your name") }
+        item {
+            Text(
+                "Used to tell a Slice loan disbursement (money sent to yourself) apart from a Slice-funded " +
+                    "payment to someone else.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        item { OwnNameRow(ownNameVariants, onSave = viewModel::setOwnNameVariants) }
+
+        item { HorizontalDivider() }
         item { SectionTitle("Cash on hand") }
         item { CashBalanceRow(cashBalance, onSave = viewModel::setCashBalance) }
 
@@ -73,6 +85,25 @@ fun SetupScreen(factory: AppViewModelFactory) {
 @Composable
 private fun SectionTitle(text: String) {
     Text(text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+}
+
+@Composable
+private fun OwnNameRow(current: Set<String>, onSave: (Set<String>) -> Unit) {
+    var text by remember(current) { mutableStateOf(current.joinToString(", ")) }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp)) {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                label = { Text("Your name, comma-separated variants") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            TextButton(onClick = {
+                val names = text.split(",").map { it.trim() }.filter { it.isNotBlank() }.toSet()
+                if (names.isNotEmpty()) onSave(names)
+            }) { Text("Save") }
+        }
+    }
 }
 
 @Composable
