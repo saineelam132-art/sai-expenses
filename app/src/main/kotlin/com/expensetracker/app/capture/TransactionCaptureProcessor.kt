@@ -28,7 +28,7 @@ object TransactionCaptureProcessor {
             val parsed = registry.parse(message, sender) ?: return // not a transaction message at all
             val app = ExpenseTrackerApp.from(context)
             val threshold = app.settingsRepository.largeTransactionThreshold.first()
-            val saved = app.transactionRepository.recordTransaction(parsed, threshold)
+            val saved = app.transactionRepository.recordTransaction(context, parsed, threshold)
             TransactionNotifier.notify(context, saved)
             BudgetAlertChecker.checkAfterTransaction(context, saved)
         } catch (c: CancellationException) {

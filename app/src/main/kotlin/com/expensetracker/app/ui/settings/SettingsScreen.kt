@@ -39,7 +39,7 @@ import java.math.BigDecimal
 import java.time.YearMonth
 
 @Composable
-fun SettingsScreen(factory: AppViewModelFactory) {
+fun SettingsScreen(factory: AppViewModelFactory, onOpenSetup: () -> Unit = {}) {
     val viewModel: SettingsViewModel = viewModel(factory = factory)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -51,6 +51,14 @@ fun SettingsScreen(factory: AppViewModelFactory) {
     val budgets by viewModel.budgets.collectAsState()
 
     LazyColumn(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        item { SectionTitle("Accounts & money") }
+        item {
+            TextButton(onClick = onOpenSetup) {
+                Text("Cash, loans, assets & friends setup")
+            }
+        }
+
+        item { HorizontalDivider() }
         item { SectionTitle("Alert thresholds") }
         item {
             var thresholdText by remember(threshold) { mutableStateOf(threshold.toPlainString()) }

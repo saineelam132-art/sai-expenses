@@ -7,7 +7,7 @@ import com.expensetracker.app.ExpenseTrackerApp
 import com.expensetracker.app.data.db.BudgetEntity
 import com.expensetracker.app.data.db.TransactionEntity
 import com.expensetracker.app.notify.NotificationChannels
-import com.expensetracker.core.model.TransactionType
+import com.expensetracker.core.model.TransactionKind
 import java.text.NumberFormat
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -25,7 +25,10 @@ object BudgetAlertChecker {
     private val inr = NumberFormat.getCurrencyInstance(Locale("en", "IN"))
 
     suspend fun checkAfterTransaction(context: Context, transaction: TransactionEntity) {
-        if (transaction.type != TransactionType.DEBIT) return
+        // Only real spending counts toward a sector budget — a Self-Transfer, Lent payment, or
+        // Loan-Disbursed debit isn't spending in that sector (sumSpendForCategory already
+        // excludes them; this gate just avoids a pointless recheck + possible confusing alert).
+        if (transaction.kind != TransactionKind.EXPENSE) return
 
         val app = ExpenseTrackerApp.from(context)
         val budget = app.database.budgetDao().getByCategory(transaction.category) ?: return

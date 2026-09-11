@@ -10,7 +10,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.expensetracker.app.ExpenseTrackerApp
 import com.expensetracker.app.notify.NotificationChannels
-import com.expensetracker.core.model.TransactionType
+import com.expensetracker.core.model.TransactionKind
 import kotlinx.coroutines.flow.first
 import java.text.NumberFormat
 import java.time.Duration
@@ -32,10 +32,15 @@ class WeeklySummaryWorker(context: Context, params: WorkerParameters) : Coroutin
         val weekAgoMillis = weekAgo.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
 
         val transactions = app.database.transactionDao().getInRange(weekAgoMillis, nowMillis)
-        val debits = transactions.filter { it.type == TransactionType.DEBIT && it.amount != null }
+        // Only real spending (kind = EXPENSE, plus the interest sliver of any loan repayment)
+        // counts here — a Self-Transfer, Lent payment, or Loan-Disbursed debit is not spending.
+        val expenses = transactions.filter { it.kind == TransactionKind.EXPENSE && it.amount != null }
+        val loanInterest = transactions
+            .filter { it.kind == TransactionKind.LOAN_REPAYMENT }
+            .sumOf { it.interestPortion?.toDouble() ?: 0.0 }
 
-        val totalSpent = debits.sumOf { it.amount!!.toDouble() }
-        val topSectors = debits.groupBy { it.category }
+        val totalSpent = expenses.sumOf { it.amount!!.toDouble() } + loanInterest
+        val topSectors = expenses.groupBy { it.category }
             .mapValues { (_, txns) -> txns.sumOf { it.amount!!.toDouble() } }
             .entries.sortedByDescending { it.value }
             .take(3)

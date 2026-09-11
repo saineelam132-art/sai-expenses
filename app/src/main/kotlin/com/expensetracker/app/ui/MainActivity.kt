@@ -9,6 +9,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Settings
@@ -17,6 +18,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -33,20 +35,25 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.expensetracker.app.ExpenseTrackerApp
+import com.expensetracker.app.ui.balancesheet.BalanceSheetScreen
 import com.expensetracker.app.ui.dashboard.DashboardScreen
 import com.expensetracker.app.ui.onboarding.PermissionsBanner
 import com.expensetracker.app.ui.onboarding.hasNotificationPostPermission
 import com.expensetracker.app.ui.onboarding.hasSmsPermission
 import com.expensetracker.app.ui.onboarding.isNotificationListenerEnabled
 import com.expensetracker.app.ui.settings.SettingsScreen
+import com.expensetracker.app.ui.setup.SetupScreen
 import com.expensetracker.app.ui.theme.ExpenseTrackerTheme
 import com.expensetracker.app.ui.transactions.TransactionListScreen
 
 private sealed class Destination(val route: String, val label: String) {
     data object Dashboard : Destination("dashboard", "Dashboard")
     data object Transactions : Destination("transactions", "Transactions")
+    data object BalanceSheet : Destination("balance_sheet", "Balance Sheet")
     data object Settings : Destination("settings", "Settings")
 }
+
+private const val SETUP_ROUTE = "setup"
 
 class MainActivity : ComponentActivity() {
     private val factory by lazy { AppViewModelFactory(ExpenseTrackerApp.from(this)) }
@@ -105,7 +112,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun AppScaffold(factory: AppViewModelFactory, initialTransactionId: Long?) {
     val navController = rememberNavController()
-    val destinations = listOf(Destination.Dashboard, Destination.Transactions, Destination.Settings)
+    val destinations = listOf(Destination.Dashboard, Destination.Transactions, Destination.BalanceSheet, Destination.Settings)
 
     Scaffold(
         bottomBar = {
@@ -136,7 +143,16 @@ private fun AppScaffold(factory: AppViewModelFactory, initialTransactionId: Long
         ) {
             composable(Destination.Dashboard.route) { DashboardScreen(factory) }
             composable(Destination.Transactions.route) { TransactionListScreen(factory, initialTransactionId) }
-            composable(Destination.Settings.route) { SettingsScreen(factory) }
+            composable(Destination.BalanceSheet.route) { BalanceSheetScreen(factory) }
+            composable(Destination.Settings.route) {
+                SettingsScreen(factory, onOpenSetup = { navController.navigate(SETUP_ROUTE) })
+            }
+            composable(SETUP_ROUTE) {
+                Column {
+                    TextButton(onClick = { navController.popBackStack() }) { Text("← Back") }
+                    SetupScreen(factory)
+                }
+            }
         }
     }
 }
@@ -144,5 +160,6 @@ private fun AppScaffold(factory: AppViewModelFactory, initialTransactionId: Long
 private fun iconFor(destination: Destination) = when (destination) {
     Destination.Dashboard -> Icons.Filled.Home
     Destination.Transactions -> Icons.Filled.List
+    Destination.BalanceSheet -> Icons.Filled.AccountBalance
     Destination.Settings -> Icons.Filled.Settings
 }

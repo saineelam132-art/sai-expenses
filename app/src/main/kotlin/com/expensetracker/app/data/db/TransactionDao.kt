@@ -49,19 +49,37 @@ interface TransactionDao {
     )
     fun observeInRange(startEpochMillis: Long, endEpochMillis: Long): Flow<List<TransactionEntity>>
 
+    // Both queries below filter on kind = 'EXPENSE', not just type = 'DEBIT' — a debit that's
+    // really a Self-Transfer, a Lent payment, or a Loan-Disbursed proceeds movement isn't real
+    // spending in any sector and must not inflate these figures (see TransactionKind).
     @Query(
         """SELECT category, SUM(CAST(amount AS REAL)) as total FROM transactions
-           WHERE type = 'DEBIT' AND transactionDateTime BETWEEN :startEpochMillis AND :endEpochMillis
+           WHERE kind = 'EXPENSE' AND transactionDateTime BETWEEN :startEpochMillis AND :endEpochMillis
            GROUP BY category""",
     )
     fun observeSectorSpend(startEpochMillis: Long, endEpochMillis: Long): Flow<List<SectorSpend>>
 
     @Query(
         """SELECT COALESCE(SUM(CAST(amount AS REAL)), 0) FROM transactions
-           WHERE type = 'DEBIT' AND category = :category
+           WHERE kind = 'EXPENSE' AND category = :category
            AND transactionDateTime BETWEEN :startEpochMillis AND :endEpochMillis""",
     )
     suspend fun sumSpendForCategory(category: Category, startEpochMillis: Long, endEpochMillis: Long): Double
+
+    /** Cash-flow building blocks: Income/Expense/Investment-Buy/Investment-Sell sums by kind, and
+     * the interest sliver of loan repayments (which counts as an expense per TransactionKind's
+     * docs even though LOAN_REPAYMENT itself is excluded from plain kind-based sums). */
+    @Query(
+        """SELECT COALESCE(SUM(CAST(amount AS REAL)), 0) FROM transactions
+           WHERE kind = :kindName AND transactionDateTime BETWEEN :startEpochMillis AND :endEpochMillis""",
+    )
+    suspend fun sumAmountForKind(kindName: String, startEpochMillis: Long, endEpochMillis: Long): Double
+
+    @Query(
+        """SELECT COALESCE(SUM(CAST(interestPortion AS REAL)), 0) FROM transactions
+           WHERE kind = 'LOAN_REPAYMENT' AND transactionDateTime BETWEEN :startEpochMillis AND :endEpochMillis""",
+    )
+    suspend fun sumLoanInterestInRange(startEpochMillis: Long, endEpochMillis: Long): Double
 
     @Query(
         """SELECT * FROM transactions
@@ -77,6 +95,28 @@ interface TransactionDao {
            ORDER BY transactionDateTime ASC LIMIT 1""",
     )
     suspend fun getEarliestBalanceSince(accountId: String, startEpochMillis: Long): BigDecimal?
+
+    /**
+     * Self-transfer detection: a same-amount, opposite-direction transaction on a *different*
+     * one of my own accounts within a short time window suggests both legs are one transfer.
+     * Amount is compared numerically (not as stored text) so differing decimal formatting
+     * ("500" vs "500.00") between two SMS still matches.
+     */
+    @Query(
+        """SELECT * FROM transactions
+           WHERE accountId IS NOT NULL AND accountId != :excludeAccountId
+           AND ABS(CAST(amount AS REAL) - :amountValue) < 0.01
+           AND type = :oppositeTypeName
+           AND transactionDateTime BETWEEN :windowStartMillis AND :windowEndMillis
+           ORDER BY transactionDateTime DESC LIMIT 1""",
+    )
+    suspend fun findPotentialSelfTransferMatch(
+        excludeAccountId: String,
+        amountValue: Double,
+        oppositeTypeName: String,
+        windowStartMillis: Long,
+        windowEndMillis: Long,
+    ): TransactionEntity?
 
     /** Recurring-payment detection: merchants billed roughly monthly at a near-identical amount. */
     @Query(

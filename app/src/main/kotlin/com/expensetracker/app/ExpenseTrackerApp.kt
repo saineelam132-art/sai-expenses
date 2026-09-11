@@ -2,6 +2,8 @@ package com.expensetracker.app
 
 import android.app.Application
 import android.content.Context
+import com.expensetracker.app.accounting.LedgerPostingEngine
+import com.expensetracker.app.accounting.TypeInferenceEngine
 import com.expensetracker.app.data.db.AppDatabase
 import com.expensetracker.app.data.repository.RoomMerchantRuleStore
 import com.expensetracker.app.data.repository.SettingsRepository
@@ -58,7 +60,15 @@ class ExpenseTrackerApp : Application() {
             loadOrSeedKeywordRules(database.keywordRuleDao())
         }
         categoryEngine = CategoryEngine(keywordRules, merchantRuleStore)
-        transactionRepository = TransactionRepository(database.transactionDao(), database.accountDao(), categoryEngine)
+        val typeInferenceEngine = TypeInferenceEngine(database.contactDao(), database.ledgerAccountDao(), database.transactionDao())
+        val ledgerPostingEngine = LedgerPostingEngine(database.ledgerAccountDao(), database.contactDao(), database.transactionDao())
+        transactionRepository = TransactionRepository(
+            database.transactionDao(),
+            database.accountDao(),
+            categoryEngine,
+            typeInferenceEngine,
+            ledgerPostingEngine,
+        )
 
         WeeklySummaryWorker.schedule(this)
     }

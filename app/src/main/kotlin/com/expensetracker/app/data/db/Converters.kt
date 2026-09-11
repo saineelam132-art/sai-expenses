@@ -3,8 +3,10 @@ package com.expensetracker.app.data.db
 import androidx.room.TypeConverter
 import com.expensetracker.core.model.Category
 import com.expensetracker.core.model.ParseConfidence
+import com.expensetracker.core.model.TransactionKind
 import com.expensetracker.core.model.TransactionType
 import java.math.BigDecimal
+import java.time.LocalDate
 import java.time.LocalDateTime
 
 /**
@@ -74,5 +76,51 @@ class Converters {
             ParseConfidence.valueOf(value)
         } catch (_: IllegalArgumentException) {
             ParseConfidence.UNPARSED
+        }
+
+    @TypeConverter
+    fun transactionKindToString(value: TransactionKind): String = value.name
+
+    @TypeConverter
+    fun stringToTransactionKind(value: String): TransactionKind =
+        try {
+            TransactionKind.valueOf(value)
+        } catch (_: IllegalArgumentException) {
+            TransactionKind.EXPENSE
+        }
+
+    @TypeConverter
+    fun ledgerSideToString(value: LedgerSide): String = value.name
+
+    @TypeConverter
+    fun stringToLedgerSide(value: String): LedgerSide =
+        try {
+            LedgerSide.valueOf(value)
+        } catch (_: IllegalArgumentException) {
+            LedgerSide.ASSET
+        }
+
+    @TypeConverter
+    fun ledgerAccountCategoryToString(value: LedgerAccountCategory): String = value.name
+
+    @TypeConverter
+    fun stringToLedgerAccountCategory(value: String): LedgerAccountCategory =
+        try {
+            LedgerAccountCategory.valueOf(value)
+        } catch (_: IllegalArgumentException) {
+            LedgerAccountCategory.MANUAL_ASSET
+        }
+
+    @TypeConverter
+    fun localDateToEpochDay(value: LocalDate?): Long? = value?.toEpochDay()
+
+    @TypeConverter
+    fun epochDayToLocalDate(value: Long?): LocalDate? =
+        value?.let {
+            try {
+                LocalDate.ofEpochDay(it)
+            } catch (_: Exception) {
+                null
+            }
         }
 }

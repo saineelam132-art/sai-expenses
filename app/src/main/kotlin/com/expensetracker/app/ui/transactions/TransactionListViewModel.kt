@@ -7,14 +7,19 @@ import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import com.expensetracker.app.ExpenseTrackerApp
+import com.expensetracker.app.data.db.ContactEntity
+import com.expensetracker.app.data.db.LedgerAccountCategory
+import com.expensetracker.app.data.db.LedgerAccountEntity
 import com.expensetracker.app.data.db.TransactionEntity
 import com.expensetracker.app.diagnostics.CrashLog
 import com.expensetracker.core.model.Category
+import com.expensetracker.core.model.TransactionKind
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -48,6 +53,21 @@ class TransactionListViewModel(private val app: ExpenseTrackerApp) : ViewModel()
         viewModelScope.launch {
             runCatching { app.transactionRepository.correctCategory(transaction, category) }
                 .onFailure { CrashLog.record(app, "correctCategory", it) }
+        }
+    }
+
+    val contacts: StateFlow<List<ContactEntity>> =
+        app.database.contactDao().observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val loans: StateFlow<List<LedgerAccountEntity>> =
+        app.database.ledgerAccountDao().observeAll()
+            .map { it.filter { a -> a.category == LedgerAccountCategory.LOAN } }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun correctKind(transaction: TransactionEntity, kind: TransactionKind, contactId: String?, loanId: String?) {
+        viewModelScope.launch {
+            runCatching { app.transactionRepository.correctKind(app, transaction, kind, contactId, loanId) }
+                .onFailure { CrashLog.record(app, "correctKind", it) }
         }
     }
 

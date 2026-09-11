@@ -30,9 +30,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.collectAsLazyPagingItems
+import com.expensetracker.app.data.db.ContactEntity
+import com.expensetracker.app.data.db.LedgerAccountEntity
 import com.expensetracker.app.data.db.TransactionEntity
 import com.expensetracker.app.ui.AppViewModelFactory
 import com.expensetracker.core.model.Category
+import com.expensetracker.core.model.TransactionKind
 import com.expensetracker.core.model.TransactionType
 import java.text.NumberFormat
 import java.time.format.DateTimeFormatter
@@ -45,8 +48,11 @@ fun TransactionListScreen(factory: AppViewModelFactory, initialTransactionId: Lo
     val reviewItems = viewModel.needsReview.collectAsLazyPagingItems()
     val totalCount by viewModel.totalCount.collectAsState()
     val needsReviewCount by viewModel.needsReviewCount.collectAsState()
+    val contacts by viewModel.contacts.collectAsState()
+    val loans by viewModel.loans.collectAsState()
     var tab by remember { mutableStateOf(0) }
     var editing by remember { mutableStateOf<TransactionEntity?>(null) }
+    var editingKind by remember { mutableStateOf<TransactionEntity?>(null) }
 
     // Deep-linked from a notification tap — looked up directly rather than searched for in the
     // (paged) list, since the tapped transaction might not be within the currently-loaded pages.
@@ -68,9 +74,9 @@ fun TransactionListScreen(factory: AppViewModelFactory, initialTransactionId: Lo
         }
 
         if (tab == 0) {
-            PagedTransactionList(allItems, onSelect = { editing = it })
+            PagedTransactionList(allItems, onSelectCategory = { editing = it }, onSelectKind = { editingKind = it })
         } else {
-            PagedTransactionList(reviewItems, onSelect = { editing = it })
+            PagedTransactionList(reviewItems, onSelectCategory = { editing = it }, onSelectKind = { editingKind = it })
         }
     }
 
@@ -84,10 +90,27 @@ fun TransactionListScreen(factory: AppViewModelFactory, initialTransactionId: Lo
             },
         )
     }
+
+    editingKind?.let { transaction ->
+        KindPickerDialog(
+            transaction = transaction,
+            contacts = contacts,
+            loans = loans,
+            onDismiss = { editingKind = null },
+            onConfirm = { kind, contactId, loanId ->
+                viewModel.correctKind(transaction, kind, contactId, loanId)
+                editingKind = null
+            },
+        )
+    }
 }
 
 @Composable
-private fun PagedTransactionList(items: LazyPagingItems<TransactionEntity>, onSelect: (TransactionEntity) -> Unit) {
+private fun PagedTransactionList(
+    items: LazyPagingItems<TransactionEntity>,
+    onSelectCategory: (TransactionEntity) -> Unit,
+    onSelectKind: (TransactionEntity) -> Unit,
+) {
     LazyColumn(
         modifier = Modifier.fillMaxWidth().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -98,7 +121,11 @@ private fun PagedTransactionList(items: LazyPagingItems<TransactionEntity>, onSe
         items(items.itemCount) { index ->
             val transaction = items[index]
             if (transaction != null) {
-                TransactionRow(transaction, onClick = { onSelect(transaction) })
+                TransactionRow(
+                    transaction,
+                    onClickCategory = { onSelectCategory(transaction) },
+                    onClickKind = { onSelectKind(transaction) },
+                )
             }
         }
 
@@ -116,10 +143,10 @@ private fun PagedTransactionList(items: LazyPagingItems<TransactionEntity>, onSe
 }
 
 @Composable
-private fun TransactionRow(transaction: TransactionEntity, onClick: () -> Unit) {
+private fun TransactionRow(transaction: TransactionEntity, onClickCategory: () -> Unit, onClickKind: () -> Unit) {
     val inr = remember { NumberFormat.getCurrencyInstance(Locale("en", "IN")) }
     val dateFormatter = remember { DateTimeFormatter.ofPattern("dd MMM, HH:mm") }
-    Card(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
+    Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(
@@ -135,7 +162,20 @@ private fun TransactionRow(transaction: TransactionEntity, onClick: () -> Unit) 
             }
             Text(transaction.merchant ?: "Unknown payee", style = MaterialTheme.typography.bodyMedium)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(transaction.category.displayName, style = MaterialTheme.typography.labelMedium)
+                TextButton(onClick = onClickCategory) { Text(transaction.category.displayName, style = MaterialTheme.typography.labelMedium) }
+                TextButton(onClick = onClickKind) {
+                    Text(
+                        transaction.kind.displayName,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (transaction.kindConfident) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 if (transaction.needsReview) {
                     Text(
                         "Needs review",
@@ -152,6 +192,76 @@ private fun TransactionRow(transaction: TransactionEntity, onClick: () -> Unit) 
             }
         }
     }
+}
+
+@Composable
+private fun KindPickerDialog(
+    transaction: TransactionEntity,
+    contacts: List<ContactEntity>,
+    loans: List<LedgerAccountEntity>,
+    onDismiss: () -> Unit,
+    onConfirm: (TransactionKind, contactId: String?, loanId: String?) -> Unit,
+) {
+    // Two-step for kinds that need a contact/loan: pick the kind, then pick which one — rather
+    // than one giant list mixing kinds and linkage targets.
+    var pendingKind by remember { mutableStateOf<TransactionKind?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            val kind = pendingKind
+            Text(
+                when {
+                    kind != null && kind.requiresContact -> "Which friend?"
+                    kind != null && kind.requiresLoan -> "Which loan?"
+                    else -> "Transaction type: ${transaction.merchant ?: "this transaction"}"
+                },
+            )
+        },
+        text = {
+            Column {
+                val kind = pendingKind
+                when {
+                    kind == null -> {
+                        TransactionKind.entries.forEach { candidate ->
+                            TextButton(
+                                onClick = {
+                                    if (candidate.requiresContact || candidate.requiresLoan) {
+                                        pendingKind = candidate
+                                    } else {
+                                        onConfirm(candidate, null, null)
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text(candidate.displayName, modifier = Modifier.fillMaxWidth()) }
+                        }
+                    }
+                    kind.requiresContact -> {
+                        if (contacts.isEmpty()) {
+                            Text("No friends added yet — add one in Settings first.", style = MaterialTheme.typography.bodySmall)
+                        }
+                        contacts.forEach { contact ->
+                            TextButton(onClick = { onConfirm(kind, contact.id, null) }, modifier = Modifier.fillMaxWidth()) {
+                                Text(contact.name, modifier = Modifier.fillMaxWidth())
+                            }
+                        }
+                    }
+                    kind.requiresLoan -> {
+                        if (loans.isEmpty()) {
+                            Text("No loans added yet — add one in Settings first.", style = MaterialTheme.typography.bodySmall)
+                        }
+                        loans.forEach { loan ->
+                            TextButton(onClick = { onConfirm(kind, null, loan.id) }, modifier = Modifier.fillMaxWidth()) {
+                                Text(loan.name, modifier = Modifier.fillMaxWidth())
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable
