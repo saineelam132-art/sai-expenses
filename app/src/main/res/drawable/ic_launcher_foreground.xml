@@ -4,8 +4,23 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Simple rupee-coin glyph, kept inside the adaptive-icon safe zone. -->
+    <!-- CashFlow mark: an infinity symbol (money moving in a loop) with a down arrow in the
+         blue loop (money in) and an up arrow in the black loop (money out), matching the
+         app's CashFlow logo. -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,20 C74,20 90,35 90,54 C90,73 74,88 54,88 C34,88 18,73 18,54 C18,35 34,20 54,20 Z M40,38 L68,38 L68,44 L58,44 C59,46 59.5,48 59.5,50 L68,50 L68,56 L58.7,56 C57,64 50,70 41,70.5 L41,65 C47,64.5 51.5,61 53,56 L40,56 L40,50 L53.5,50 C53.2,48 52.3,46 50.8,44 L40,44 Z" />
+        android:strokeColor="#173D77"
+        android:strokeWidth="8"
+        android:fillColor="#00000000"
+        android:pathData="M41,54 m-20,0 a20,20 0 1,0 40,0 a20,20 0 1,0 -40,0" />
+    <path
+        android:strokeColor="#101317"
+        android:strokeWidth="8"
+        android:fillColor="#00000000"
+        android:pathData="M67,54 m-20,0 a20,20 0 1,0 40,0 a20,20 0 1,0 -40,0" />
+    <path
+        android:fillColor="#173D77"
+        android:pathData="M33,47 L49,47 L41,61 Z" />
+    <path
+        android:fillColor="#101317"
+        android:pathData="M67,42 L76,54 L70,54 L70,66 L64,66 L64,54 L58,54 Z" />
 </vector>
