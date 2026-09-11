@@ -1,21 +1,23 @@
 package com.expensetracker.app.ui.transactions
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -25,6 +27,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.paging.LoadState
+import androidx.paging.compose.LazyPagingItems
+import androidx.paging.compose.collectAsLazyPagingItems
 import com.expensetracker.app.data.db.TransactionEntity
 import com.expensetracker.app.ui.AppViewModelFactory
 import com.expensetracker.core.model.Category
@@ -36,32 +41,36 @@ import java.util.Locale
 @Composable
 fun TransactionListScreen(factory: AppViewModelFactory, initialTransactionId: Long? = null) {
     val viewModel: TransactionListViewModel = viewModel(factory = factory)
-    val all by viewModel.allTransactions.collectAsState()
-    val needsReview by viewModel.needsReview.collectAsState()
+    val allItems = viewModel.allTransactions.collectAsLazyPagingItems()
+    val reviewItems = viewModel.needsReview.collectAsLazyPagingItems()
+    val totalCount by viewModel.totalCount.collectAsState()
+    val needsReviewCount by viewModel.needsReviewCount.collectAsState()
     var tab by remember { mutableStateOf(0) }
     var editing by remember { mutableStateOf<TransactionEntity?>(null) }
 
-    // Deep-linked from a notification tap — jump straight to the confirm-category dialog.
-    LaunchedEffect(initialTransactionId, all) {
-        if (initialTransactionId != null) {
-            all.firstOrNull { it.id == initialTransactionId }?.let { editing = it }
+    // Deep-linked from a notification tap — looked up directly rather than searched for in the
+    // (paged) list, since the tapped transaction might not be within the currently-loaded pages.
+    val deepLinked by viewModel.deepLinkedTransaction.collectAsState()
+    LaunchedEffect(initialTransactionId) {
+        if (initialTransactionId != null) viewModel.loadDeepLinkedTransaction(initialTransactionId)
+    }
+    LaunchedEffect(deepLinked) {
+        deepLinked?.let {
+            editing = it
+            viewModel.clearDeepLinkedTransaction()
         }
     }
 
     Column(Modifier.fillMaxWidth()) {
         TabRow(selectedTabIndex = tab) {
-            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("All (${all.size})") })
-            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Needs review (${needsReview.size})") })
+            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("All ($totalCount)") })
+            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Needs review ($needsReviewCount)") })
         }
 
-        val list = if (tab == 0) all else needsReview
-        LazyColumn(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            items(list, key = { it.id }) { transaction ->
-                TransactionRow(transaction, onClick = { editing = transaction })
-            }
+        if (tab == 0) {
+            PagedTransactionList(allItems, onSelect = { editing = it })
+        } else {
+            PagedTransactionList(reviewItems, onSelect = { editing = it })
         }
     }
 
@@ -74,6 +83,35 @@ fun TransactionListScreen(factory: AppViewModelFactory, initialTransactionId: Lo
                 editing = null
             },
         )
+    }
+}
+
+@Composable
+private fun PagedTransactionList(items: LazyPagingItems<TransactionEntity>, onSelect: (TransactionEntity) -> Unit) {
+    LazyColumn(
+        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        // key = null (default) rather than item.id: Paging's own placeholder/load-state
+        // bookkeeping already keys by position, and a malformed row (see the null-check inside
+        // the loop) must never crash the whole list — a bad key derivation could.
+        items(items.itemCount) { index ->
+            val transaction = items[index]
+            if (transaction != null) {
+                TransactionRow(transaction, onClick = { onSelect(transaction) })
+            }
+        }
+
+        if (items.loadState.append is LoadState.Loading) {
+            item {
+                Box(Modifier.fillMaxWidth().padding(16.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.padding(8.dp))
+                }
+            }
+        }
+        if (items.itemCount == 0 && items.loadState.refresh !is LoadState.Loading) {
+            item { Text("Nothing here yet.", style = MaterialTheme.typography.bodyMedium) }
+        }
     }
 }
 

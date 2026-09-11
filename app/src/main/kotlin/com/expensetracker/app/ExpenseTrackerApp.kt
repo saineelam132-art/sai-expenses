@@ -7,9 +7,11 @@ import com.expensetracker.app.data.repository.RoomMerchantRuleStore
 import com.expensetracker.app.data.repository.SettingsRepository
 import com.expensetracker.app.data.repository.TransactionRepository
 import com.expensetracker.app.data.repository.loadOrSeedKeywordRules
+import com.expensetracker.app.diagnostics.CrashLog
 import com.expensetracker.app.notify.NotificationChannels
 import com.expensetracker.app.worker.WeeklySummaryWorker
 import com.expensetracker.core.categorize.CategoryEngine
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -21,7 +23,15 @@ import kotlinx.coroutines.runBlocking
  * a ready [TransactionRepository] and [CategoryEngine] immediately.
  */
 class ExpenseTrackerApp : Application() {
-    val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // Any uncaught exception from a coroutine launched on this scope (SMS/notification capture,
+    // in particular — background work with no UI to show a normal error to) is logged instead of
+    // crashing the whole process. SupervisorJob already stops one child's failure from cancelling
+    // siblings; this handler is what stops it from reaching the thread's default (crashing)
+    // handler at all.
+    private val coroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        CrashLog.record(this, "applicationScope", throwable)
+    }
+    val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + coroutineExceptionHandler)
 
     lateinit var database: AppDatabase
         private set
@@ -34,6 +44,7 @@ class ExpenseTrackerApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        CrashLog.installUncaughtExceptionLogger(this)
         NotificationChannels.createAll(this)
 
         database = AppDatabase.getInstance(this)

@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.expensetracker.app.ExpenseTrackerApp
 import com.expensetracker.app.data.db.BudgetEntity
 import com.expensetracker.app.data.db.KeywordRuleEntity
+import com.expensetracker.app.diagnostics.CrashLog
 import com.expensetracker.app.export.CsvExporter
 import com.expensetracker.core.model.Category
 import kotlinx.coroutines.Dispatchers
@@ -75,23 +76,29 @@ class SettingsViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
     }
 
     /** Exports the given month (or all time if null) and sector (or all if null) to a CSV file and returns its content URI. */
-    suspend fun exportCsv(month: YearMonth?, category: Category?): Uri = withContext(Dispatchers.IO) {
-        val zone = ZoneId.systemDefault()
-        val (startMillis, endMillis) = if (month != null) {
-            val start = month.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
-            val end = month.atEndOfMonth().atTime(23, 59, 59).atZone(zone).toInstant().toEpochMilli()
-            start to end
-        } else {
-            0L to LocalDate.now().plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-        }
-        val transactions = app.database.transactionDao().getInRange(startMillis, endMillis)
-            .filter { category == null || it.category == category }
+    /** Null on failure (disk I/O, etc.) — logged via [CrashLog] rather than crashing the Settings screen. */
+    suspend fun exportCsv(month: YearMonth?, category: Category?): Uri? = withContext(Dispatchers.IO) {
+        try {
+            val zone = ZoneId.systemDefault()
+            val (startMillis, endMillis) = if (month != null) {
+                val start = month.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
+                val end = month.atEndOfMonth().atTime(23, 59, 59).atZone(zone).toInstant().toEpochMilli()
+                start to end
+            } else {
+                0L to LocalDate.now().plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+            }
+            val transactions = app.database.transactionDao().getInRange(startMillis, endMillis)
+                .filter { category == null || it.category == category }
 
-        val label = buildString {
-            append("expenses")
-            if (month != null) append("_$month")
-            if (category != null) append("_${category.name.lowercase()}")
+            val label = buildString {
+                append("expenses")
+                if (month != null) append("_$month")
+                if (category != null) append("_${category.name.lowercase()}")
+            }
+            CsvExporter.writeCsv(app.applicationContext, transactions, label)
+        } catch (e: Exception) {
+            CrashLog.record(app, "SettingsViewModel.exportCsv", e)
+            null
         }
-        CsvExporter.writeCsv(app.applicationContext, transactions, label)
     }
 }

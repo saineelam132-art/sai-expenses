@@ -1,5 +1,6 @@
 package com.expensetracker.app.data.db
 
+import androidx.paging.PagingSource
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
@@ -18,14 +19,28 @@ interface TransactionDao {
     @Update
     suspend fun update(transaction: TransactionEntity)
 
+    /**
+     * Paged rather than a plain Flow<List<...>> — an unbounded live query over every transaction
+     * ever captured (which only grows) was the crash risk: the whole table got loaded into memory
+     * and re-diffed on every single DB write, including the flood of once-mis-parsed promotional
+     * messages that used to land in "needs review" (see the parser hardening that reduces that
+     * flood at the source). Room generates the PagingSource implementation from this query.
+     */
     @Query("SELECT * FROM transactions ORDER BY transactionDateTime DESC")
-    fun observeAll(): Flow<List<TransactionEntity>>
+    fun observeAllPaged(): PagingSource<Int, TransactionEntity>
 
     @Query("SELECT * FROM transactions WHERE needsReview = 1 ORDER BY transactionDateTime DESC")
-    fun observeNeedsReview(): Flow<List<TransactionEntity>>
+    fun observeNeedsReviewPaged(): PagingSource<Int, TransactionEntity>
 
     @Query("SELECT * FROM transactions WHERE id = :id")
     suspend fun getById(id: Long): TransactionEntity?
+
+    /** Cheap counts for the tab labels — paging no longer gives us the full list size for free. */
+    @Query("SELECT COUNT(*) FROM transactions")
+    fun observeTotalCount(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM transactions WHERE needsReview = 1")
+    fun observeNeedsReviewCount(): Flow<Int>
 
     @Query(
         """SELECT * FROM transactions

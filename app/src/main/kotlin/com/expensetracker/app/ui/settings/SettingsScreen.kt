@@ -123,6 +123,7 @@ fun SettingsScreen(factory: AppViewModelFactory) {
         item { SectionTitle("Export") }
         item {
             var monthText by remember { mutableStateOf(YearMonth.now().toString()) }
+            var exportError by remember { mutableStateOf<String?>(null) }
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp)) {
                     OutlinedTextField(
@@ -134,18 +135,48 @@ fun SettingsScreen(factory: AppViewModelFactory) {
                     Button(
                         onClick = {
                             scope.launch {
+                                exportError = null
                                 val month = runCatching { YearMonth.parse(monthText) }.getOrNull()
                                 val uri = viewModel.exportCsv(month, category = null)
-                                context.startActivity(
-                                    Intent.createChooser(
-                                        com.expensetracker.app.export.CsvExporter.shareIntent(uri),
-                                        "Export transactions",
-                                    ),
-                                )
+                                if (uri != null) {
+                                    context.startActivity(
+                                        Intent.createChooser(
+                                            com.expensetracker.app.export.CsvExporter.shareIntent(uri),
+                                            "Export transactions",
+                                        ),
+                                    )
+                                } else {
+                                    exportError = "Export failed — check the diagnostic log in Settings for details."
+                                }
                             }
                         },
                         modifier = Modifier.padding(top = 8.dp),
                     ) { Text("Export CSV") }
+                    exportError?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+
+        item { HorizontalDivider() }
+        item { SectionTitle("Diagnostics") }
+        item {
+            var noLogYet by remember { mutableStateOf(false) }
+            Column {
+                TextButton(onClick = {
+                    val intent = com.expensetracker.app.diagnostics.CrashLog.shareIntent(context)
+                    if (intent != null) {
+                        context.startActivity(Intent.createChooser(intent, "Share diagnostic log"))
+                    } else {
+                        noLogYet = true
+                    }
+                }) { Text("Share diagnostic log") }
+                if (noLogYet) {
+                    Text(
+                        "No errors logged yet — nothing to share.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
             }
         }

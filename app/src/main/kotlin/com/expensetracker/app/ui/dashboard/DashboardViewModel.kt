@@ -5,10 +5,12 @@ import androidx.lifecycle.viewModelScope
 import com.expensetracker.app.ExpenseTrackerApp
 import com.expensetracker.app.data.db.AccountEntity
 import com.expensetracker.app.data.db.SectorSpend
+import com.expensetracker.app.diagnostics.CrashLog
 import com.expensetracker.core.model.Category
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -38,6 +40,10 @@ class DashboardViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
     private val recurring = MutableStateFlow<List<RecurringPayment>>(emptyList())
 
     val uiState: StateFlow<DashboardUiState> = buildState()
+        .catch { e ->
+            CrashLog.record(app, "DashboardViewModel.buildState", e)
+            emit(DashboardUiState())
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardUiState())
 
     init {
@@ -45,9 +51,14 @@ class DashboardViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
     }
 
     private suspend fun loadRecurringPayments() {
-        val repeated = app.database.transactionDao().getRepeatedMerchantAmounts()
-        recurring.value = repeated.map {
-            RecurringPayment(it.merchant, it.amountText.toDoubleOrNull() ?: 0.0, it.occurrences)
+        runCatching {
+            app.database.transactionDao().getRepeatedMerchantAmounts()
+        }.onSuccess { repeated ->
+            recurring.value = repeated.map {
+                RecurringPayment(it.merchant, it.amountText.toDoubleOrNull() ?: 0.0, it.occurrences)
+            }
+        }.onFailure {
+            CrashLog.record(app, "DashboardViewModel.loadRecurringPayments", it)
         }
     }
 
