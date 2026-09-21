@@ -8,6 +8,7 @@ import androidx.room.Update
 import com.expensetracker.core.model.Category
 import kotlinx.coroutines.flow.Flow
 import java.math.BigDecimal
+import java.time.LocalDateTime
 
 data class SectorSpend(val category: Category, val total: Double)
 
@@ -117,6 +118,11 @@ interface TransactionDao {
         windowStartMillis: Long,
         windowEndMillis: Long,
     ): TransactionEntity?
+
+    /** Bills view (section 10): most recent EXPENSE for this merchant, used to flag a bill as
+     * possibly overdue by staleness rather than computing/guessing a specific next-due-date. */
+    @Query("""SELECT MAX(transactionDateTime) FROM transactions WHERE merchant = :merchant AND kind = 'EXPENSE'""")
+    suspend fun getLastExpenseDate(merchant: String): LocalDateTime?
 
     /** Recurring-payment detection: merchants billed roughly monthly at a near-identical amount. */
     @Query(

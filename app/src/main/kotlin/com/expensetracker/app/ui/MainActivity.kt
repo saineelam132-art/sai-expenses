@@ -36,7 +36,9 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.expensetracker.app.ExpenseTrackerApp
 import com.expensetracker.app.ui.balancesheet.BalanceSheetScreen
+import com.expensetracker.app.ui.bills.BillsScreen
 import com.expensetracker.app.ui.dashboard.DashboardScreen
+import com.expensetracker.app.ui.friends.FriendsScreen
 import com.expensetracker.app.ui.onboarding.PermissionsBanner
 import com.expensetracker.app.ui.onboarding.hasNotificationPostPermission
 import com.expensetracker.app.ui.onboarding.hasSmsPermission
@@ -54,6 +56,8 @@ private sealed class Destination(val route: String, val label: String) {
 }
 
 private const val SETUP_ROUTE = "setup"
+private const val FRIENDS_ROUTE = "friends"
+private const val BILLS_ROUTE = "bills"
 
 class MainActivity : ComponentActivity() {
     private val factory by lazy { AppViewModelFactory(ExpenseTrackerApp.from(this)) }
@@ -143,7 +147,13 @@ private fun AppScaffold(factory: AppViewModelFactory, initialTransactionId: Long
         ) {
             composable(Destination.Dashboard.route) { DashboardScreen(factory) }
             composable(Destination.Transactions.route) { TransactionListScreen(factory, initialTransactionId) }
-            composable(Destination.BalanceSheet.route) { BalanceSheetScreen(factory) }
+            composable(Destination.BalanceSheet.route) {
+                BalanceSheetScreen(
+                    factory,
+                    onOpenFriends = { navController.navigate(FRIENDS_ROUTE) },
+                    onOpenBills = { navController.navigate(BILLS_ROUTE) },
+                )
+            }
             composable(Destination.Settings.route) {
                 SettingsScreen(factory, onOpenSetup = { navController.navigate(SETUP_ROUTE) })
             }
@@ -151,6 +161,18 @@ private fun AppScaffold(factory: AppViewModelFactory, initialTransactionId: Long
                 Column {
                     TextButton(onClick = { navController.popBackStack() }) { Text("← Back") }
                     SetupScreen(factory)
+                }
+            }
+            composable(FRIENDS_ROUTE) {
+                Column {
+                    TextButton(onClick = { navController.popBackStack() }) { Text("← Back") }
+                    FriendsScreen(factory)
+                }
+            }
+            composable(BILLS_ROUTE) {
+                Column {
+                    TextButton(onClick = { navController.popBackStack() }) { Text("← Back") }
+                    BillsScreen(factory)
                 }
             }
         }
