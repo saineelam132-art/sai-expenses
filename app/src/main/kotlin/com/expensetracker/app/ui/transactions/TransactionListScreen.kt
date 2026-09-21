@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -83,11 +84,13 @@ fun TransactionListScreen(factory: AppViewModelFactory, initialTransactionId: Lo
                 onSelectNote = { editingNote = it },
             )
         } else {
-            PagedTransactionList(
+            PagedReviewList(
                 reviewItems,
-                onSelectCategory = { editing = it },
-                onSelectKind = { editingKind = it },
-                onSelectNote = { editingNote = it },
+                reviewCount = needsReviewCount,
+                onSelfTransfer = { viewModel.correctKind(it, TransactionKind.SELF_TRANSFER, null, null) },
+                onIncome = { viewModel.correctKind(it, TransactionKind.INCOME, null, null) },
+                onIgnore = { viewModel.markReviewed(it) },
+                onTagCategory = { editing = it },
             )
         }
     }
@@ -163,6 +166,101 @@ private fun PagedTransactionList(
         }
         if (items.itemCount == 0 && items.loadState.refresh !is LoadState.Loading) {
             item { Text("Nothing here yet.", style = MaterialTheme.typography.bodyMedium) }
+        }
+    }
+}
+
+/**
+ * Bulk-resolve review queue (section 12): "N new transactions to review," each row resolved
+ * instantly with a one-tap chip — [Self Transfer] [Income] [Ignore] [Tag category] — no
+ * per-transaction screen needed. Still paginated (~20 at a time) like [PagedTransactionList] —
+ * this is a UI shape, not an unbounded query.
+ */
+@Composable
+private fun PagedReviewList(
+    items: LazyPagingItems<TransactionEntity>,
+    reviewCount: Int,
+    onSelfTransfer: (TransactionEntity) -> Unit,
+    onIncome: (TransactionEntity) -> Unit,
+    onIgnore: (TransactionEntity) -> Unit,
+    onTagCategory: (TransactionEntity) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item {
+            Text(
+                if (reviewCount > 0) "$reviewCount new transactions to review" else "All caught up!",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        items(items.itemCount) { index ->
+            val transaction = items[index]
+            if (transaction != null) {
+                ReviewRow(
+                    transaction,
+                    onSelfTransfer = { onSelfTransfer(transaction) },
+                    onIncome = { onIncome(transaction) },
+                    onIgnore = { onIgnore(transaction) },
+                    onTagCategory = { onTagCategory(transaction) },
+                )
+            }
+        }
+
+        if (items.loadState.append is LoadState.Loading) {
+            item {
+                Box(Modifier.fillMaxWidth().padding(16.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.padding(8.dp))
+                }
+            }
+        }
+        if (items.itemCount == 0 && items.loadState.refresh !is LoadState.Loading) {
+            item { Text("Nothing here yet.", style = MaterialTheme.typography.bodyMedium) }
+        }
+    }
+}
+
+@Composable
+private fun ReviewRow(
+    transaction: TransactionEntity,
+    onSelfTransfer: () -> Unit,
+    onIncome: () -> Unit,
+    onIgnore: () -> Unit,
+    onTagCategory: () -> Unit,
+) {
+    val inr = remember { NumberFormat.getCurrencyInstance(Locale("en", "IN")) }
+    val dateFormatter = remember { DateTimeFormatter.ofPattern("dd MMM, HH:mm") }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(
+                    text = transaction.amount?.let { inr.format(it) } ?: "Amount unknown",
+                    fontWeight = FontWeight.Bold,
+                    color = if (transaction.type == TransactionType.CREDIT) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                )
+                Text(transaction.transactionDateTime.format(dateFormatter), style = MaterialTheme.typography.bodySmall)
+            }
+            Text(transaction.merchant ?: "Unknown payee", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                "Auto-tagged: ${transaction.category.displayName}",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                Modifier.fillMaxWidth().padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                AssistChip(onClick = onSelfTransfer, label = { Text("Self Transfer") })
+                AssistChip(onClick = onIncome, label = { Text("Income") })
+                AssistChip(onClick = onIgnore, label = { Text("Ignore") })
+                AssistChip(onClick = onTagCategory, label = { Text("Tag category") })
+            }
         }
     }
 }

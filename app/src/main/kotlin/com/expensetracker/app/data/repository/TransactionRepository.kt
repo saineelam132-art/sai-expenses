@@ -90,12 +90,15 @@ class TransactionRepository(
     }
 
     /**
-     * User corrected (or confirmed) a transaction's accounting kind. Reverses whatever the old
-     * kind had posted, then posts the new one — see [LedgerPostingEngine] for why that's always
-     * safe regardless of what the old/new kinds were. [contactId]/[loanId] are required for kinds
-     * that need them (see [TransactionKind.requiresContact]/[TransactionKind.requiresLoan]);
-     * changing the kind always clears any previously-computed loan-repayment principal/interest
-     * split, since it no longer applies.
+     * User corrected (or confirmed) a transaction's accounting kind — including via the review
+     * screen's one-tap Self-Transfer/Income chips (section 12), which resolve a review-queue
+     * entry instantly with no per-transaction screen. Reverses whatever the old kind had posted,
+     * then posts the new one — see [LedgerPostingEngine] for why that's always safe regardless of
+     * what the old/new kinds were. [contactId]/[loanId] are required for kinds that need them
+     * (see [TransactionKind.requiresContact]/[TransactionKind.requiresLoan]); changing the kind
+     * always clears any previously-computed loan-repayment principal/interest split, since it no
+     * longer applies. Confirming a kind is itself a review action, so this also clears
+     * [TransactionEntity.needsReview].
      */
     suspend fun correctKind(
         context: Context,
@@ -120,6 +123,8 @@ class TransactionRepository(
             },
             principalPortion = null,
             interestPortion = null,
+            needsReview = false,
+            userReviewed = true,
         )
         transactionDao.update(updated)
         ledgerPostingEngine.post(context, updated)
@@ -129,6 +134,13 @@ class TransactionRepository(
      * auto-captured or manual, editable anytime. Purely informational: no ledger effect. */
     suspend fun setNote(transaction: TransactionEntity, note: String?) {
         transactionDao.update(transaction.copy(notes = note?.takeIf { it.isNotBlank() }))
+    }
+
+    /** The review screen's "Ignore" quick action (section 12) — accepts the auto-tagged
+     * category/kind as-is and drops the transaction out of the review queue without changing
+     * either. */
+    suspend fun markReviewed(transaction: TransactionEntity) {
+        transactionDao.update(transaction.copy(needsReview = false, userReviewed = true))
     }
 
     private fun accountIdFor(parsed: ParsedTransaction): String? {
