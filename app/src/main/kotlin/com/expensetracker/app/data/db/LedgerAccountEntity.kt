@@ -26,8 +26,11 @@ enum class LedgerAccountCategory { CASH, INVESTMENTS, LOAN, RECEIVABLE, PAYABLE,
  * reconcile against, so this must be kept correct by construction (every kind of posting that
  * touches a bucket is centralized in the posting engine, not scattered across the UI).
  *
- * Loan-specific fields ([principal], [interestRatePercent], [disbursedDate], [lastAccrualDate],
- * [emiAmount]) are null for every category except LOAN.
+ * Loan-specific fields are null for every category except LOAN. They mirror what a real loan
+ * agreement states, so nothing about a loan has to be derived: [interestRatePercent] and
+ * [aprPercent] are deliberately separate (APR includes fees, so they differ), and the
+ * installment-by-installment repayment schedule lives in [LoanScheduleEntity] rather than being
+ * computed from these figures.
  */
 @Entity(tableName = "ledger_accounts")
 data class LedgerAccountEntity(
@@ -41,9 +44,17 @@ data class LedgerAccountEntity(
     val principal: BigDecimal? = null,
     val interestRatePercent: Double? = null,
     val disbursedDate: LocalDate? = null,
-    /** Last date interest was accrued/settled against this loan — reducing-balance interest for
-     * the next repayment is computed from this date, not [disbursedDate], once it's set. */
-    val lastAccrualDate: LocalDate? = null,
     val emiAmount: BigDecimal? = null,
+    /** Lender's own loan/account number, as printed on the agreement. */
+    val loanAccountNumber: String? = null,
+    val sanctionedAmount: BigDecimal? = null,
+    val tenureMonths: Int? = null,
+    /** Annual Percentage Rate — includes fees, so it differs from [interestRatePercent]. */
+    val aprPercent: Double? = null,
+    val processingFee: BigDecimal? = null,
+    val insuranceCharge: BigDecimal? = null,
+    /** Free text, quoted from the agreement (e.g. "Rs.500 or 30% of EMI, whichever is lower"). */
+    val penalChargeTerms: String? = null,
+    val foreclosureChargeTerms: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
 )

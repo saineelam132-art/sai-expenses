@@ -16,16 +16,21 @@ import androidx.room.TypeConverters
         ContactEntity::class,
         LedgerAccountEntity::class,
         RecurringBillEntity::class,
+        LoanScheduleEntity::class,
     ],
     // v2: added the accounting-engine tables (contacts, ledger_accounts) and new columns on
     // transactions (kind, linkedContactId, linkedLoanId, principalPortion, interestPortion).
     // v3: added recurring_bills (UPI AutoPay mandate lifecycle tracking).
-    // v4: added transactions.notes (free-text note, editable anytime). Destructive migration
+    // v4: added transactions.notes (free-text note, editable anytime).
+    // v5: added loan_schedule (stored installment-by-installment repayment schedule) and the
+    // loan-agreement fields on ledger_accounts (loan account no., sanctioned amount, tenure,
+    // APR, fees, penal/foreclosure terms); dropped ledger_accounts.lastAccrualDate, which only
+    // existed for the formula-based interest split that schedules replace. Destructive migration
     // rather than a hand-written Migration — this project has no released users yet, so
     // preserving old local test data isn't worth the risk of an unverifiable migration (this
     // environment has no Android SDK to actually run one against). Uninstall and reinstall the
     // app after this update.
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -38,6 +43,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun contactDao(): ContactDao
     abstract fun ledgerAccountDao(): LedgerAccountDao
     abstract fun recurringBillDao(): RecurringBillDao
+    abstract fun loanScheduleDao(): LoanScheduleDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null

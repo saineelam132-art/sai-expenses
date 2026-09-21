@@ -16,6 +16,7 @@ enum class Category(val displayName: String) {
     RENT_EMI("Rent/EMI"),
     SUBSCRIPTIONS("Subscriptions"),
     EDUCATION("Education"),
+    INVESTMENTS("Investments"),
     MISCELLANEOUS("Miscellaneous"),
     UNCATEGORIZED("Uncategorized"),
 }

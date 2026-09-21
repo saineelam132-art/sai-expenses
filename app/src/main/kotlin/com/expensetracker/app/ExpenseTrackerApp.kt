@@ -73,7 +73,12 @@ class ExpenseTrackerApp : Application() {
             database.transactionDao(),
             settingsRepository,
         )
-        val ledgerPostingEngine = LedgerPostingEngine(database.ledgerAccountDao(), database.contactDao())
+        val ledgerPostingEngine = LedgerPostingEngine(
+            database.ledgerAccountDao(),
+            database.contactDao(),
+            database.transactionDao(),
+            database.loanScheduleDao(),
+        )
         transactionRepository = TransactionRepository(
             database.transactionDao(),
             database.accountDao(),

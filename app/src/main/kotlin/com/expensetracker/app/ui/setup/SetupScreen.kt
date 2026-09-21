@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.expensetracker.app.data.db.ContactEntity
 import com.expensetracker.app.data.db.LedgerAccountEntity
+import com.expensetracker.app.data.db.LoanScheduleEntity
 import com.expensetracker.app.ui.AppViewModelFactory
 import java.math.BigDecimal
 import java.time.LocalDate
@@ -60,7 +61,22 @@ fun SetupScreen(factory: AppViewModelFactory) {
 
         item { HorizontalDivider() }
         item { SectionTitle("Loans") }
-        items(loans, key = { it.id }) { loan -> LoanRow(loan, onDelete = { viewModel.deleteLedgerAccount(loan.id) }) }
+        item {
+            Text(
+                "Enter a loan exactly as its agreement states. If you have the document, add the " +
+                    "full installment schedule too — repayments are matched against those rows, " +
+                    "and the principal/interest split is taken from them rather than calculated.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        items(loans, key = { it.id }) { loan ->
+            LoanRow(
+                loan,
+                schedule = viewModel.scheduleFor(loan.id).collectAsState().value,
+                onDelete = { viewModel.deleteLedgerAccount(loan.id) },
+                onAddScheduleRow = viewModel::addScheduleRow,
+            )
+        }
         item { AddLoanForm(onAdd = viewModel::addLoan) }
 
         item { HorizontalDivider() }
@@ -123,18 +139,109 @@ private fun CashBalanceRow(current: BigDecimal, onSave: (BigDecimal) -> Unit) {
 }
 
 @Composable
-private fun LoanRow(loan: LedgerAccountEntity, onDelete: () -> Unit) {
+private fun LoanRow(
+    loan: LedgerAccountEntity,
+    schedule: List<LoanScheduleEntity>,
+    onDelete: () -> Unit,
+    onAddScheduleRow: (LoanScheduleEntity) -> Unit,
+) {
+    var showSchedule by remember { mutableStateOf(false) }
     Card(modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            Column {
-                Text(loan.name, fontWeight = FontWeight.Bold)
-                Text(
-                    "Outstanding: ${loan.balance.toPlainString()} · Rate: ${loan.interestRatePercent ?: 0.0}%",
-                    style = MaterialTheme.typography.bodySmall,
+        Column(Modifier.padding(12.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column {
+                    Text(loan.name, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Outstanding: ${loan.balance.toPlainString()} · Rate: ${loan.interestRatePercent ?: 0.0}%" +
+                            (loan.aprPercent?.let { " · APR: $it%" } ?: ""),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    loan.loanAccountNumber?.let {
+                        Text("A/c $it", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Text(
+                        if (schedule.isEmpty()) {
+                            "No schedule entered — repayments will need manual matching"
+                        } else {
+                            "${schedule.count { it.matchedTransactionId != null }} of ${schedule.size} installments paid"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                TextButton(onClick = onDelete) { Text("Remove") }
+            }
+            TextButton(onClick = { showSchedule = !showSchedule }) {
+                Text(if (showSchedule) "Hide schedule" else "Schedule (${schedule.size})")
+            }
+            if (showSchedule) {
+                schedule.forEach { row -> ScheduleRowLine(row) }
+                AddScheduleRowForm(
+                    loanId = loan.id,
+                    nextInstallmentNumber = (schedule.maxOfOrNull { it.installmentNumber } ?: 0) + 1,
+                    onAdd = onAddScheduleRow,
                 )
             }
-            TextButton(onClick = onDelete) { Text("Remove") }
         }
+    }
+}
+
+@Composable
+private fun ScheduleRowLine(row: LoanScheduleEntity) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text("#${row.installmentNumber}  ${row.dueDate}", style = MaterialTheme.typography.bodySmall)
+        Text(
+            "${row.totalAmount.toPlainString()} (P ${row.principalPortion.toPlainString()} / " +
+                "I ${row.interestPortion.toPlainString()})" + if (row.matchedTransactionId != null) " ✓" else "",
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+/** Row-by-row entry of the agreement's Schedule-I table — deliberately plain: no OCR or PDF
+ * parsing for v1, just the five numbers each row of the printed table already gives you. */
+@Composable
+private fun AddScheduleRowForm(loanId: String, nextInstallmentNumber: Int, onAdd: (LoanScheduleEntity) -> Unit) {
+    var dueDate by remember { mutableStateOf("") }
+    var principal by remember { mutableStateOf("") }
+    var interest by remember { mutableStateOf("") }
+    var total by remember { mutableStateOf("") }
+    var remaining by remember { mutableStateOf("") }
+
+    Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Add installment #$nextInstallmentNumber", fontWeight = FontWeight.Bold)
+        OutlinedTextField(dueDate, { dueDate = it }, label = { Text("Due date (YYYY-MM-DD)") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(principal, { principal = it }, label = { Text("Principal") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(interest, { interest = it }, label = { Text("Interest") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(total, { total = it }, label = { Text("Installment amount") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(
+            remaining,
+            { remaining = it },
+            label = { Text("Remaining principal after") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        TextButton(onClick = {
+            val date = runCatching { LocalDate.parse(dueDate) }.getOrNull()
+            val principalValue = principal.toBigDecimalOrNull()
+            val interestValue = interest.toBigDecimalOrNull()
+            val totalValue = total.toBigDecimalOrNull()
+            val remainingValue = remaining.toBigDecimalOrNull()
+            if (date != null && principalValue != null && interestValue != null &&
+                totalValue != null && remainingValue != null
+            ) {
+                onAdd(
+                    LoanScheduleEntity(
+                        loanId = loanId,
+                        installmentNumber = nextInstallmentNumber,
+                        dueDate = date,
+                        principalPortion = principalValue,
+                        interestPortion = interestValue,
+                        totalAmount = totalValue,
+                        remainingPrincipalAfter = remainingValue,
+                    ),
+                )
+                dueDate = ""; principal = ""; interest = ""; total = ""; remaining = ""
+            }
+        }) { Text("Add installment") }
     }
 }
 
@@ -161,23 +268,38 @@ private fun ContactRow(contact: ContactEntity, onDelete: () -> Unit) {
     }
 }
 
+/**
+ * Only the lender name and current outstanding balance are required — a loan you have no
+ * paperwork for is still worth tracking as a liability. Everything else mirrors a real loan
+ * agreement and can be filled in when the document is to hand.
+ */
 @Composable
-private fun AddLoanForm(
-    onAdd: (name: String, principal: BigDecimal, ratePercent: Double, disbursedDate: LocalDate, outstanding: BigDecimal, emi: BigDecimal?) -> Unit,
-) {
+private fun AddLoanForm(onAdd: (LoanDetails) -> Unit) {
     var name by remember { mutableStateOf("") }
+    var outstanding by remember { mutableStateOf("") }
+    var disbursedDate by remember { mutableStateOf("") }
     var principal by remember { mutableStateOf("") }
     var rate by remember { mutableStateOf("") }
-    var disbursedDate by remember { mutableStateOf("") }
-    var outstanding by remember { mutableStateOf("") }
+    var apr by remember { mutableStateOf("") }
     var emi by remember { mutableStateOf("") }
+    var loanAccountNumber by remember { mutableStateOf("") }
+    var sanctioned by remember { mutableStateOf("") }
+    var tenure by remember { mutableStateOf("") }
+    var processingFee by remember { mutableStateOf("") }
+    var insurance by remember { mutableStateOf("") }
+    var penalTerms by remember { mutableStateOf("") }
+    var foreclosureTerms by remember { mutableStateOf("") }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("Add a loan", fontWeight = FontWeight.Bold)
             OutlinedTextField(name, { name = it }, label = { Text("Lender / name") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(principal, { principal = it }, label = { Text("Original principal (₹)") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(rate, { rate = it }, label = { Text("Annual interest rate (%)") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(
+                outstanding,
+                { outstanding = it },
+                label = { Text("Current outstanding balance (₹)") },
+                modifier = Modifier.fillMaxWidth(),
+            )
             OutlinedTextField(
                 disbursedDate,
                 { disbursedDate = it },
@@ -185,20 +307,60 @@ private fun AddLoanForm(
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
-                outstanding,
-                { outstanding = it },
-                label = { Text("Current outstanding balance (₹)") },
+                loanAccountNumber,
+                { loanAccountNumber = it },
+                label = { Text("Loan account number") },
                 modifier = Modifier.fillMaxWidth(),
             )
+            OutlinedTextField(sanctioned, { sanctioned = it }, label = { Text("Sanctioned amount (₹)") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(principal, { principal = it }, label = { Text("Original principal (₹)") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(tenure, { tenure = it }, label = { Text("Tenure (months)") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(rate, { rate = it }, label = { Text("Interest rate (%)") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(apr, { apr = it }, label = { Text("APR (%) — includes fees") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(emi, { emi = it }, label = { Text("EMI amount (₹, optional)") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(
+                processingFee,
+                { processingFee = it },
+                label = { Text("Processing fee (₹, one-time)") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                insurance,
+                { insurance = it },
+                label = { Text("Insurance / other charge (₹, one-time)") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(penalTerms, { penalTerms = it }, label = { Text("Penal charge terms") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(
+                foreclosureTerms,
+                { foreclosureTerms = it },
+                label = { Text("Foreclosure charge terms") },
+                modifier = Modifier.fillMaxWidth(),
+            )
             TextButton(onClick = {
-                val principalValue = principal.toBigDecimalOrNull()
-                val rateValue = rate.toDoubleOrNull()
-                val dateValue = runCatching { LocalDate.parse(disbursedDate) }.getOrNull()
                 val outstandingValue = outstanding.toBigDecimalOrNull()
-                if (name.isNotBlank() && principalValue != null && rateValue != null && dateValue != null && outstandingValue != null) {
-                    onAdd(name, principalValue, rateValue, dateValue, outstandingValue, emi.toBigDecimalOrNull())
-                    name = ""; principal = ""; rate = ""; disbursedDate = ""; outstanding = ""; emi = ""
+                if (name.isNotBlank() && outstandingValue != null) {
+                    onAdd(
+                        LoanDetails(
+                            name = name,
+                            outstandingBalance = outstandingValue,
+                            disbursedDate = runCatching { LocalDate.parse(disbursedDate) }.getOrNull(),
+                            principal = principal.toBigDecimalOrNull(),
+                            interestRatePercent = rate.toDoubleOrNull(),
+                            emiAmount = emi.toBigDecimalOrNull(),
+                            loanAccountNumber = loanAccountNumber.takeIf { it.isNotBlank() },
+                            sanctionedAmount = sanctioned.toBigDecimalOrNull(),
+                            tenureMonths = tenure.toIntOrNull(),
+                            aprPercent = apr.toDoubleOrNull(),
+                            processingFee = processingFee.toBigDecimalOrNull(),
+                            insuranceCharge = insurance.toBigDecimalOrNull(),
+                            penalChargeTerms = penalTerms.takeIf { it.isNotBlank() },
+                            foreclosureChargeTerms = foreclosureTerms.takeIf { it.isNotBlank() },
+                        ),
+                    )
+                    name = ""; outstanding = ""; disbursedDate = ""; principal = ""; rate = ""; apr = ""
+                    emi = ""; loanAccountNumber = ""; sanctioned = ""; tenure = ""
+                    processingFee = ""; insurance = ""; penalTerms = ""; foreclosureTerms = ""
                 }
             }) { Text("Add loan") }
         }

@@ -6,10 +6,16 @@ import com.expensetracker.app.data.db.LedgerAccountCategory
 import com.expensetracker.app.data.db.LedgerAccountDao
 import com.expensetracker.app.data.db.LedgerAccountEntity
 import com.expensetracker.app.data.db.LedgerSide
+import com.expensetracker.app.data.db.LoanScheduleDao
+import com.expensetracker.app.data.db.LoanScheduleEntity
+import com.expensetracker.app.data.db.TransactionDao
 import com.expensetracker.app.data.db.TransactionEntity
 import com.expensetracker.app.diagnostics.CrashLog
+import com.expensetracker.core.loan.LoanScheduleMatcher
+import com.expensetracker.core.loan.ScheduleInstallment
 import com.expensetracker.core.model.TransactionKind
 import java.math.BigDecimal
+import java.time.LocalDate
 
 /**
  * Applies a transaction's accounting effect to the ledger's asset/liability buckets
@@ -28,6 +34,8 @@ import java.math.BigDecimal
 class LedgerPostingEngine(
     private val ledgerAccountDao: LedgerAccountDao,
     private val contactDao: ContactDao,
+    private val transactionDao: TransactionDao,
+    private val loanScheduleDao: LoanScheduleDao,
 ) {
     suspend fun post(context: Context, transaction: TransactionEntity) {
         applyPosting(context, transaction, sign = 1)
@@ -105,19 +113,53 @@ class LedgerPostingEngine(
     }
 
     /**
-     * Reduces the loan's outstanding balance by the *full* repayment amount — no reducing-balance
-     * or flat-interest formula is assumed here. [TransactionEntity.principalPortion]/
-     * [TransactionEntity.interestPortion] stay null until real loan terms (this loan's actual
-     * amortization schedule) are provided; guessing a split would misstate the outstanding
-     * balance in a way that's hard to notice and worse than not splitting at all. Because there's
-     * no derived state to persist, post and reverse are trivially exact inverses (same amount,
-     * opposite sign).
+     * Applies a repayment using the split from the loan's **stored** schedule row (see
+     * [LoanScheduleEntity]) — never a computed one. The repayment is matched to an unpaid row by
+     * amount and due date; that row's principal portion reduces the liability, its interest
+     * portion is persisted on the transaction so cash-flow reporting can count only the interest
+     * as an expense, and the row is marked as paid so it can't be consumed twice.
+     *
+     * A repayment that matches no row is **flagged for manual matching** rather than guessed at:
+     * an off-schedule payment (part payment, foreclosure, penal charge) has no principal/interest
+     * split this app can honestly infer, and inventing one would silently misstate the balance.
      */
     private suspend fun postLoanRepayment(transaction: TransactionEntity, sign: Int) {
         val loanId = transaction.linkedLoanId ?: return
         val loan = ledgerAccountDao.getById(loanId) ?: return
         val amount = transaction.amount ?: return
-        save(loan.copy(balance = clampNonNegative(loan.balance - amount * sign.toBigDecimal())))
+
+        if (sign < 0) {
+            // Reversal: give the schedule row back, and undo exactly the principal that was
+            // applied when it was matched (stored on the row, so this can't drift).
+            val matchedRow = loanScheduleDao.getMatchedTo(transaction.id) ?: return
+            loanScheduleDao.update(matchedRow.copy(matchedTransactionId = null))
+            save(loan.copy(balance = clampNonNegative(loan.balance + matchedRow.principalPortion)))
+            return
+        }
+
+        val row = findScheduleRowFor(loanId, amount, transaction.transactionDateTime.toLocalDate())
+        if (row == null) {
+            transactionDao.update(transaction.copy(needsReview = true))
+            return
+        }
+
+        loanScheduleDao.update(row.copy(matchedTransactionId = transaction.id))
+        transactionDao.update(
+            transaction.copy(principalPortion = row.principalPortion, interestPortion = row.interestPortion),
+        )
+        save(loan.copy(balance = clampNonNegative(loan.balance - row.principalPortion)))
+    }
+
+    /** Which unpaid installment a repayment paid — the rule itself lives in (and is tested in)
+     * [LoanScheduleMatcher]; this only maps rows to and from it. */
+    private suspend fun findScheduleRowFor(loanId: String, amount: BigDecimal, paidOn: LocalDate): LoanScheduleEntity? {
+        val unpaid = loanScheduleDao.getUnmatchedForLoan(loanId)
+        val matched = LoanScheduleMatcher.match(
+            unpaid.map { ScheduleInstallment(it.installmentNumber, it.dueDate, it.totalAmount) },
+            amount,
+            paidOn,
+        ) ?: return null
+        return unpaid.firstOrNull { it.installmentNumber == matched.installmentNumber }
     }
 
     private suspend fun getOrCreate(
