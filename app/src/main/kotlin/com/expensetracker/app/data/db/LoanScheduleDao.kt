@@ -33,4 +33,7 @@ interface LoanScheduleDao {
 
     @Query("DELETE FROM loan_schedule WHERE loanId = :loanId")
     suspend fun deleteForLoan(loanId: String)
+
+    @Query("DELETE FROM loan_schedule WHERE loanId = :loanId AND installmentNumber = :installmentNumber")
+    suspend fun delete(loanId: String, installmentNumber: Int)
 }

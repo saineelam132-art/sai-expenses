@@ -101,38 +101,57 @@ class SetupViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
     fun addLoan(details: LoanDetails) {
         viewModelScope.launch {
             val loanId = UUID.randomUUID().toString()
-            app.database.ledgerAccountDao().upsert(
-                LedgerAccountEntity(
-                    id = loanId,
-                    name = details.name,
-                    side = LedgerSide.LIABILITY,
-                    category = LedgerAccountCategory.LOAN,
-                    balance = details.outstandingBalance,
-                    principal = details.principal,
-                    interestRatePercent = details.interestRatePercent,
-                    disbursedDate = details.disbursedDate,
-                    emiAmount = details.emiAmount,
-                    loanAccountNumber = details.loanAccountNumber,
-                    sanctionedAmount = details.sanctionedAmount,
-                    tenureMonths = details.tenureMonths,
-                    aprPercent = details.aprPercent,
-                    processingFee = details.processingFee,
-                    insuranceCharge = details.insuranceCharge,
-                    penalChargeTerms = details.penalChargeTerms,
-                    foreclosureChargeTerms = details.foreclosureChargeTerms,
-                ),
-            )
-            logOneTimeCharges(details)
+            app.database.ledgerAccountDao().upsert(details.toEntity(loanId))
+            logOneTimeCharges(loanId, details)
         }
     }
 
-    private suspend fun logOneTimeCharges(details: LoanDetails) {
+    /**
+     * Corrects an existing loan in place — a mistyped figure shouldn't cost the whole entry (and
+     * its schedule, which is keyed by loan id and so survives untouched). The one-time fee
+     * transactions are re-logged from the corrected figures, since a fee entered wrong would
+     * otherwise leave a stale expense in the ledger forever.
+     */
+    fun updateLoan(loanId: String, details: LoanDetails) {
+        viewModelScope.launch {
+            val existing = app.database.ledgerAccountDao().getById(loanId)
+            app.database.ledgerAccountDao().upsert(
+                details.toEntity(loanId, createdAt = existing?.createdAt ?: System.currentTimeMillis()),
+            )
+            app.database.transactionDao().deleteLoanSetupFees(loanId)
+            logOneTimeCharges(loanId, details)
+        }
+    }
+
+    private fun LoanDetails.toEntity(loanId: String, createdAt: Long = System.currentTimeMillis()) =
+        LedgerAccountEntity(
+            id = loanId,
+            name = name,
+            side = LedgerSide.LIABILITY,
+            category = LedgerAccountCategory.LOAN,
+            balance = outstandingBalance,
+            principal = principal,
+            interestRatePercent = interestRatePercent,
+            disbursedDate = disbursedDate,
+            emiAmount = emiAmount,
+            loanAccountNumber = loanAccountNumber,
+            sanctionedAmount = sanctionedAmount,
+            tenureMonths = tenureMonths,
+            aprPercent = aprPercent,
+            processingFee = processingFee,
+            insuranceCharge = insuranceCharge,
+            penalChargeTerms = penalChargeTerms,
+            foreclosureChargeTerms = foreclosureChargeTerms,
+            createdAt = createdAt,
+        )
+
+    private suspend fun logOneTimeCharges(loanId: String, details: LoanDetails) {
         val charges = listOfNotNull(
-            details.processingFee?.takeIf { it > BigDecimal.ZERO }?.let { "Processing fee" to it },
-            details.insuranceCharge?.takeIf { it > BigDecimal.ZERO }?.let { "Insurance charge" to it },
+            details.processingFee?.takeIf { it > BigDecimal.ZERO }?.let { Triple("processing", "Processing fee", it) },
+            details.insuranceCharge?.takeIf { it > BigDecimal.ZERO }?.let { Triple("insurance", "Insurance charge", it) },
         )
         val disbursedAt = (details.disbursedDate ?: LocalDate.now()).atStartOfDay()
-        charges.forEach { (label, amount) ->
+        charges.forEach { (key, label, amount) ->
             app.database.transactionDao().insert(
                 TransactionEntity(
                     amount = amount,
@@ -143,7 +162,9 @@ class SetupViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
                     transactionDateTime = disbursedAt,
                     availableBalance = null,
                     accountId = null,
-                    referenceId = null,
+                    // Stable marker so these rows can be found again and replaced when the loan
+                    // is edited, or removed with it.
+                    referenceId = "$LOAN_FEE_PREFIX$loanId:$key",
                     sourceLabel = "Manual",
                     rawMessage = "Loan setup: $label for ${details.name}",
                     parseConfidence = ParseConfidence.HIGH,
@@ -157,9 +178,14 @@ class SetupViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
         }
     }
 
-    /** One installment row of a loan's agreement schedule (section 6). */
+    /** One installment row of a loan's agreement schedule (section 6). Also used to correct a
+     * row: the primary key is (loanId, installmentNumber), so re-submitting that pair replaces it. */
     fun addScheduleRow(row: LoanScheduleEntity) {
         viewModelScope.launch { app.database.loanScheduleDao().upsert(row) }
+    }
+
+    fun deleteScheduleRow(loanId: String, installmentNumber: Int) {
+        viewModelScope.launch { app.database.loanScheduleDao().delete(loanId, installmentNumber) }
     }
 
     fun scheduleFor(loanId: String): StateFlow<List<LoanScheduleEntity>> =
@@ -180,11 +206,19 @@ class SetupViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
         }
     }
 
+    fun updateManualAsset(id: String, name: String, value: BigDecimal) {
+        viewModelScope.launch {
+            val existing = app.database.ledgerAccountDao().getById(id) ?: return@launch
+            app.database.ledgerAccountDao().upsert(existing.copy(name = name, balance = value))
+        }
+    }
+
     fun deleteLedgerAccount(id: String) {
         viewModelScope.launch {
-            // Schedule rows are meaningless without their loan — drop them together so a
-            // re-added loan can't inherit a stale schedule under a recycled id.
+            // A loan's schedule rows and its one-time setup fees are meaningless without it —
+            // drop them together, so a re-added loan can't inherit either under a recycled id.
             app.database.loanScheduleDao().deleteForLoan(id)
+            app.database.transactionDao().deleteLoanSetupFees(id)
             app.database.ledgerAccountDao().delete(id)
         }
     }
@@ -200,7 +234,38 @@ class SetupViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
         }
     }
 
+    fun updateContact(id: String, name: String, identifiers: List<String>) {
+        viewModelScope.launch {
+            val normalized = identifiers.mapNotNull { CategoryEngine.normalize(it) }.filter { it.isNotBlank() }
+            app.database.contactDao().upsert(
+                ContactEntity(id = id, name = name, knownIdentifiers = normalized.joinToString(",")),
+            )
+        }
+    }
+
     fun deleteContact(id: String) {
         viewModelScope.launch { app.database.contactDao().delete(id) }
     }
+
+    companion object {
+        private const val LOAN_FEE_PREFIX = "loan-fee:"
+    }
 }
+
+/** Pre-fills the edit form from what's already stored. */
+fun LedgerAccountEntity.toLoanDetails() = LoanDetails(
+    name = name,
+    outstandingBalance = balance,
+    disbursedDate = disbursedDate,
+    principal = principal,
+    interestRatePercent = interestRatePercent,
+    emiAmount = emiAmount,
+    loanAccountNumber = loanAccountNumber,
+    sanctionedAmount = sanctionedAmount,
+    tenureMonths = tenureMonths,
+    aprPercent = aprPercent,
+    processingFee = processingFee,
+    insuranceCharge = insuranceCharge,
+    penalChargeTerms = penalChargeTerms,
+    foreclosureChargeTerms = foreclosureChargeTerms,
+)

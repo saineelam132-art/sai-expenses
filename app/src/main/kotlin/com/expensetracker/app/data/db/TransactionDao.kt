@@ -135,6 +135,14 @@ interface TransactionDao {
         windowEndMillis: Long,
     ): TransactionEntity?
 
+    /**
+     * Removes the one-time processing/insurance charges logged when a loan was set up, so
+     * correcting a mistyped fee (or deleting the loan) doesn't leave a stale expense behind.
+     * Matched on the stable "loan-fee:<loanId>:" reference these rows are written with.
+     */
+    @Query("DELETE FROM transactions WHERE referenceId LIKE 'loan-fee:' || :loanId || ':%'")
+    suspend fun deleteLoanSetupFees(loanId: String)
+
     /** Bills view (section 10): most recent EXPENSE for this merchant, used to flag a bill as
      * possibly overdue by staleness rather than computing/guessing a specific next-due-date. */
     @Query("""SELECT MAX(transactionDateTime) FROM transactions WHERE merchant = :merchant AND kind = 'EXPENSE'""")

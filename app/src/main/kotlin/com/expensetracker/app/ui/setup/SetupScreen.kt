@@ -19,6 +19,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -74,14 +75,22 @@ fun SetupScreen(factory: AppViewModelFactory) {
                 loan,
                 schedule = viewModel.scheduleFor(loan.id).collectAsState().value,
                 onDelete = { viewModel.deleteLedgerAccount(loan.id) },
+                onSave = { viewModel.updateLoan(loan.id, it) },
                 onAddScheduleRow = viewModel::addScheduleRow,
+                onDeleteScheduleRow = { viewModel.deleteScheduleRow(loan.id, it) },
             )
         }
-        item { AddLoanForm(onAdd = viewModel::addLoan) }
+        item { LoanForm(onSubmit = viewModel::addLoan) }
 
         item { HorizontalDivider() }
         item { SectionTitle("Other assets") }
-        items(manualAssets, key = { it.id }) { asset -> ManualAssetRow(asset, onDelete = { viewModel.deleteLedgerAccount(asset.id) }) }
+        items(manualAssets, key = { it.id }) { asset ->
+            ManualAssetRow(
+                asset,
+                onDelete = { viewModel.deleteLedgerAccount(asset.id) },
+                onSave = { name, value -> viewModel.updateManualAsset(asset.id, name, value) },
+            )
+        }
         item { AddManualAssetForm(onAdd = viewModel::addManualAsset) }
 
         item { HorizontalDivider() }
@@ -93,7 +102,13 @@ fun SetupScreen(factory: AppViewModelFactory) {
                 style = MaterialTheme.typography.bodySmall,
             )
         }
-        items(contacts, key = { it.id }) { contact -> ContactRow(contact, onDelete = { viewModel.deleteContact(contact.id) }) }
+        items(contacts, key = { it.id }) { contact ->
+            ContactRow(
+                contact,
+                onDelete = { viewModel.deleteContact(contact.id) },
+                onSave = { name, identifiers -> viewModel.updateContact(contact.id, name, identifiers) },
+            )
+        }
         item { AddContactForm(onAdd = viewModel::addContact) }
     }
 }
@@ -143,13 +158,31 @@ private fun LoanRow(
     loan: LedgerAccountEntity,
     schedule: List<LoanScheduleEntity>,
     onDelete: () -> Unit,
+    onSave: (LoanDetails) -> Unit,
     onAddScheduleRow: (LoanScheduleEntity) -> Unit,
+    onDeleteScheduleRow: (Int) -> Unit,
 ) {
     var showSchedule by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf(false) }
+
+    if (editing) {
+        LoanForm(
+            onSubmit = {
+                onSave(it)
+                editing = false
+            },
+            initial = loan.toLoanDetails(),
+            title = "Edit ${loan.name}",
+            submitLabel = "Save changes",
+            onCancel = { editing = false },
+        )
+        return
+    }
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Column {
+                Column(Modifier.weight(1f)) {
                     Text(loan.name, fontWeight = FontWeight.Bold)
                     Text(
                         "Outstanding: ${loan.balance.toPlainString()} · Rate: ${loan.interestRatePercent ?: 0.0}%" +
@@ -168,13 +201,22 @@ private fun LoanRow(
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                TextButton(onClick = onDelete) { Text("Remove") }
+                Column {
+                    TextButton(onClick = { editing = true }) { Text("Edit") }
+                    TextButton(onClick = onDelete) { Text("Remove") }
+                }
             }
             TextButton(onClick = { showSchedule = !showSchedule }) {
                 Text(if (showSchedule) "Hide schedule" else "Schedule (${schedule.size})")
             }
             if (showSchedule) {
-                schedule.forEach { row -> ScheduleRowLine(row) }
+                schedule.forEach { row ->
+                    ScheduleRowLine(
+                        row,
+                        onDelete = { onDeleteScheduleRow(row.installmentNumber) },
+                        onSave = onAddScheduleRow,
+                    )
+                }
                 AddScheduleRowForm(
                     loanId = loan.id,
                     nextInstallmentNumber = (schedule.maxOfOrNull { it.installmentNumber } ?: 0) + 1,
@@ -186,14 +228,42 @@ private fun LoanRow(
 }
 
 @Composable
-private fun ScheduleRowLine(row: LoanScheduleEntity) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text("#${row.installmentNumber}  ${row.dueDate}", style = MaterialTheme.typography.bodySmall)
-        Text(
-            "${row.totalAmount.toPlainString()} (P ${row.principalPortion.toPlainString()} / " +
-                "I ${row.interestPortion.toPlainString()})" + if (row.matchedTransactionId != null) " ✓" else "",
-            style = MaterialTheme.typography.bodySmall,
+private fun ScheduleRowLine(
+    row: LoanScheduleEntity,
+    onDelete: () -> Unit,
+    onSave: (LoanScheduleEntity) -> Unit,
+) {
+    var editing by remember { mutableStateOf(false) }
+    if (editing) {
+        ScheduleRowForm(
+            loanId = row.loanId,
+            installmentNumber = row.installmentNumber,
+            initial = row,
+            submitLabel = "Save installment",
+            onSubmit = {
+                // Keep the payment this row was already matched to; only the figures change.
+                onSave(it.copy(matchedTransactionId = row.matchedTransactionId))
+                editing = false
+            },
+            onCancel = { editing = false },
         )
+        return
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("#${row.installmentNumber}  ${row.dueDate}", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "${row.totalAmount.toPlainString()} (P ${row.principalPortion.toPlainString()} / " +
+                    "I ${row.interestPortion.toPlainString()})" + if (row.matchedTransactionId != null) " ✓ paid" else "",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        TextButton(onClick = { editing = true }) { Text("Edit") }
+        TextButton(onClick = onDelete) { Text("Remove") }
     }
 }
 
@@ -201,14 +271,36 @@ private fun ScheduleRowLine(row: LoanScheduleEntity) {
  * parsing for v1, just the five numbers each row of the printed table already gives you. */
 @Composable
 private fun AddScheduleRowForm(loanId: String, nextInstallmentNumber: Int, onAdd: (LoanScheduleEntity) -> Unit) {
-    var dueDate by remember { mutableStateOf("") }
-    var principal by remember { mutableStateOf("") }
-    var interest by remember { mutableStateOf("") }
-    var total by remember { mutableStateOf("") }
-    var remaining by remember { mutableStateOf("") }
+    ScheduleRowForm(
+        loanId = loanId,
+        installmentNumber = nextInstallmentNumber,
+        initial = null,
+        submitLabel = "Add installment",
+        onSubmit = onAdd,
+    )
+}
+
+/** Shared by adding a new installment and correcting an existing one. */
+@Composable
+private fun ScheduleRowForm(
+    loanId: String,
+    installmentNumber: Int,
+    initial: LoanScheduleEntity?,
+    submitLabel: String,
+    onSubmit: (LoanScheduleEntity) -> Unit,
+    onCancel: (() -> Unit)? = null,
+) {
+    var dueDate by remember(initial) { mutableStateOf(initial?.dueDate?.toString().orEmpty()) }
+    var principal by remember(initial) { mutableStateOf(initial?.principalPortion?.toPlainString().orEmpty()) }
+    var interest by remember(initial) { mutableStateOf(initial?.interestPortion?.toPlainString().orEmpty()) }
+    var total by remember(initial) { mutableStateOf(initial?.totalAmount?.toPlainString().orEmpty()) }
+    var remaining by remember(initial) { mutableStateOf(initial?.remainingPrincipalAfter?.toPlainString().orEmpty()) }
 
     Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("Add installment #$nextInstallmentNumber", fontWeight = FontWeight.Bold)
+        Text(
+            if (initial == null) "Add installment #$installmentNumber" else "Edit installment #$installmentNumber",
+            fontWeight = FontWeight.Bold,
+        )
         OutlinedTextField(dueDate, { dueDate = it }, label = { Text("Due date (YYYY-MM-DD)") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(principal, { principal = it }, label = { Text("Principal") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(interest, { interest = it }, label = { Text("Interest") }, modifier = Modifier.fillMaxWidth())
@@ -219,80 +311,160 @@ private fun AddScheduleRowForm(loanId: String, nextInstallmentNumber: Int, onAdd
             label = { Text("Remaining principal after") },
             modifier = Modifier.fillMaxWidth(),
         )
-        TextButton(onClick = {
-            val date = runCatching { LocalDate.parse(dueDate) }.getOrNull()
-            val principalValue = principal.toBigDecimalOrNull()
-            val interestValue = interest.toBigDecimalOrNull()
-            val totalValue = total.toBigDecimalOrNull()
-            val remainingValue = remaining.toBigDecimalOrNull()
-            if (date != null && principalValue != null && interestValue != null &&
-                totalValue != null && remainingValue != null
-            ) {
-                onAdd(
-                    LoanScheduleEntity(
-                        loanId = loanId,
-                        installmentNumber = nextInstallmentNumber,
-                        dueDate = date,
-                        principalPortion = principalValue,
-                        interestPortion = interestValue,
-                        totalAmount = totalValue,
-                        remainingPrincipalAfter = remainingValue,
-                    ),
-                )
-                dueDate = ""; principal = ""; interest = ""; total = ""; remaining = ""
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = {
+                val date = runCatching { LocalDate.parse(dueDate) }.getOrNull()
+                val principalValue = principal.toBigDecimalOrNull()
+                val interestValue = interest.toBigDecimalOrNull()
+                val totalValue = total.toBigDecimalOrNull()
+                val remainingValue = remaining.toBigDecimalOrNull()
+                if (date != null && principalValue != null && interestValue != null &&
+                    totalValue != null && remainingValue != null
+                ) {
+                    onSubmit(
+                        LoanScheduleEntity(
+                            loanId = loanId,
+                            installmentNumber = installmentNumber,
+                            dueDate = date,
+                            principalPortion = principalValue,
+                            interestPortion = interestValue,
+                            totalAmount = totalValue,
+                            remainingPrincipalAfter = remainingValue,
+                        ),
+                    )
+                    if (initial == null) {
+                        dueDate = ""; principal = ""; interest = ""; total = ""; remaining = ""
+                    }
+                }
+            }) { Text(submitLabel) }
+            if (onCancel != null) {
+                TextButton(onClick = onCancel) { Text("Cancel") }
             }
-        }) { Text("Add installment") }
-    }
-}
-
-@Composable
-private fun ManualAssetRow(asset: LedgerAccountEntity, onDelete: () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("${asset.name}: ${asset.balance.toPlainString()}")
-            TextButton(onClick = onDelete) { Text("Remove") }
         }
     }
 }
 
 @Composable
-private fun ContactRow(contact: ContactEntity, onDelete: () -> Unit) {
+private fun ManualAssetRow(
+    asset: LedgerAccountEntity,
+    onDelete: () -> Unit,
+    onSave: (name: String, value: BigDecimal) -> Unit,
+) {
+    var editing by remember { mutableStateOf(false) }
+    var name by remember(asset) { mutableStateOf(asset.name) }
+    var value by remember(asset) { mutableStateOf(asset.balance.toPlainString()) }
+
     Card(modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            Column {
-                Text(contact.name, fontWeight = FontWeight.Bold)
-                Text(contact.knownIdentifiers, style = MaterialTheme.typography.bodySmall)
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (editing) {
+                OutlinedTextField(name, { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value, { value = it }, label = { Text("Current value (₹)") }, modifier = Modifier.fillMaxWidth())
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = {
+                        val parsed = value.toBigDecimalOrNull()
+                        if (name.isNotBlank() && parsed != null) {
+                            onSave(name, parsed)
+                            editing = false
+                        }
+                    }) { Text("Save") }
+                    TextButton(onClick = {
+                        name = asset.name
+                        value = asset.balance.toPlainString()
+                        editing = false
+                    }) { Text("Cancel") }
+                }
+            } else {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("${asset.name}: ${asset.balance.toPlainString()}", modifier = Modifier.weight(1f))
+                    TextButton(onClick = { editing = true }) { Text("Edit") }
+                    TextButton(onClick = onDelete) { Text("Remove") }
+                }
             }
-            TextButton(onClick = onDelete) { Text("Remove") }
+        }
+    }
+}
+
+@Composable
+private fun ContactRow(
+    contact: ContactEntity,
+    onDelete: () -> Unit,
+    onSave: (name: String, identifiers: List<String>) -> Unit,
+) {
+    var editing by remember { mutableStateOf(false) }
+    var name by remember(contact) { mutableStateOf(contact.name) }
+    var identifiers by remember(contact) { mutableStateOf(contact.knownIdentifiers) }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (editing) {
+                OutlinedTextField(name, { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(
+                    identifiers,
+                    { identifiers = it },
+                    label = { Text("Known UPI handles / names, comma-separated") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = {
+                        if (name.isNotBlank()) {
+                            onSave(name, identifiers.split(",").map { it.trim() }.filter { it.isNotBlank() })
+                            editing = false
+                        }
+                    }) { Text("Save") }
+                    TextButton(onClick = {
+                        name = contact.name
+                        identifiers = contact.knownIdentifiers
+                        editing = false
+                    }) { Text("Cancel") }
+                }
+            } else {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(contact.name, fontWeight = FontWeight.Bold)
+                        Text(contact.knownIdentifiers, style = MaterialTheme.typography.bodySmall)
+                    }
+                    TextButton(onClick = { editing = true }) { Text("Edit") }
+                    TextButton(onClick = onDelete) { Text("Remove") }
+                }
+            }
         }
     }
 }
 
 /**
+ * Serves both adding and correcting a loan: pass [initial] to pre-fill it from what's stored.
  * Only the lender name and current outstanding balance are required — a loan you have no
  * paperwork for is still worth tracking as a liability. Everything else mirrors a real loan
  * agreement and can be filled in when the document is to hand.
  */
 @Composable
-private fun AddLoanForm(onAdd: (LoanDetails) -> Unit) {
-    var name by remember { mutableStateOf("") }
-    var outstanding by remember { mutableStateOf("") }
-    var disbursedDate by remember { mutableStateOf("") }
-    var principal by remember { mutableStateOf("") }
-    var rate by remember { mutableStateOf("") }
-    var apr by remember { mutableStateOf("") }
-    var emi by remember { mutableStateOf("") }
-    var loanAccountNumber by remember { mutableStateOf("") }
-    var sanctioned by remember { mutableStateOf("") }
-    var tenure by remember { mutableStateOf("") }
-    var processingFee by remember { mutableStateOf("") }
-    var insurance by remember { mutableStateOf("") }
-    var penalTerms by remember { mutableStateOf("") }
-    var foreclosureTerms by remember { mutableStateOf("") }
+private fun LoanForm(
+    onSubmit: (LoanDetails) -> Unit,
+    initial: LoanDetails? = null,
+    title: String = "Add a loan",
+    submitLabel: String = "Add loan",
+    onCancel: (() -> Unit)? = null,
+) {
+    fun BigDecimal?.text() = this?.toPlainString().orEmpty()
+
+    var name by remember(initial) { mutableStateOf(initial?.name.orEmpty()) }
+    var outstanding by remember(initial) { mutableStateOf(initial?.outstandingBalance.text()) }
+    var disbursedDate by remember(initial) { mutableStateOf(initial?.disbursedDate?.toString().orEmpty()) }
+    var principal by remember(initial) { mutableStateOf(initial?.principal.text()) }
+    var rate by remember(initial) { mutableStateOf(initial?.interestRatePercent?.toString().orEmpty()) }
+    var apr by remember(initial) { mutableStateOf(initial?.aprPercent?.toString().orEmpty()) }
+    var emi by remember(initial) { mutableStateOf(initial?.emiAmount.text()) }
+    var loanAccountNumber by remember(initial) { mutableStateOf(initial?.loanAccountNumber.orEmpty()) }
+    var sanctioned by remember(initial) { mutableStateOf(initial?.sanctionedAmount.text()) }
+    var tenure by remember(initial) { mutableStateOf(initial?.tenureMonths?.toString().orEmpty()) }
+    var processingFee by remember(initial) { mutableStateOf(initial?.processingFee.text()) }
+    var insurance by remember(initial) { mutableStateOf(initial?.insuranceCharge.text()) }
+    var penalTerms by remember(initial) { mutableStateOf(initial?.penalChargeTerms.orEmpty()) }
+    var foreclosureTerms by remember(initial) { mutableStateOf(initial?.foreclosureChargeTerms.orEmpty()) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Add a loan", fontWeight = FontWeight.Bold)
+            Text(title, fontWeight = FontWeight.Bold)
             OutlinedTextField(name, { name = it }, label = { Text("Lender / name") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(
                 outstanding,
@@ -337,32 +509,41 @@ private fun AddLoanForm(onAdd: (LoanDetails) -> Unit) {
                 label = { Text("Foreclosure charge terms") },
                 modifier = Modifier.fillMaxWidth(),
             )
-            TextButton(onClick = {
-                val outstandingValue = outstanding.toBigDecimalOrNull()
-                if (name.isNotBlank() && outstandingValue != null) {
-                    onAdd(
-                        LoanDetails(
-                            name = name,
-                            outstandingBalance = outstandingValue,
-                            disbursedDate = runCatching { LocalDate.parse(disbursedDate) }.getOrNull(),
-                            principal = principal.toBigDecimalOrNull(),
-                            interestRatePercent = rate.toDoubleOrNull(),
-                            emiAmount = emi.toBigDecimalOrNull(),
-                            loanAccountNumber = loanAccountNumber.takeIf { it.isNotBlank() },
-                            sanctionedAmount = sanctioned.toBigDecimalOrNull(),
-                            tenureMonths = tenure.toIntOrNull(),
-                            aprPercent = apr.toDoubleOrNull(),
-                            processingFee = processingFee.toBigDecimalOrNull(),
-                            insuranceCharge = insurance.toBigDecimalOrNull(),
-                            penalChargeTerms = penalTerms.takeIf { it.isNotBlank() },
-                            foreclosureChargeTerms = foreclosureTerms.takeIf { it.isNotBlank() },
-                        ),
-                    )
-                    name = ""; outstanding = ""; disbursedDate = ""; principal = ""; rate = ""; apr = ""
-                    emi = ""; loanAccountNumber = ""; sanctioned = ""; tenure = ""
-                    processingFee = ""; insurance = ""; penalTerms = ""; foreclosureTerms = ""
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = {
+                    val outstandingValue = outstanding.toBigDecimalOrNull()
+                    if (name.isNotBlank() && outstandingValue != null) {
+                        onSubmit(
+                            LoanDetails(
+                                name = name,
+                                outstandingBalance = outstandingValue,
+                                disbursedDate = runCatching { LocalDate.parse(disbursedDate) }.getOrNull(),
+                                principal = principal.toBigDecimalOrNull(),
+                                interestRatePercent = rate.toDoubleOrNull(),
+                                emiAmount = emi.toBigDecimalOrNull(),
+                                loanAccountNumber = loanAccountNumber.takeIf { it.isNotBlank() },
+                                sanctionedAmount = sanctioned.toBigDecimalOrNull(),
+                                tenureMonths = tenure.toIntOrNull(),
+                                aprPercent = apr.toDoubleOrNull(),
+                                processingFee = processingFee.toBigDecimalOrNull(),
+                                insuranceCharge = insurance.toBigDecimalOrNull(),
+                                penalChargeTerms = penalTerms.takeIf { it.isNotBlank() },
+                                foreclosureChargeTerms = foreclosureTerms.takeIf { it.isNotBlank() },
+                            ),
+                        )
+                        // Only the add form resets; an edit form is dismissed by its caller, and
+                        // clearing it would blank the fields for a moment on the way out.
+                        if (initial == null) {
+                            name = ""; outstanding = ""; disbursedDate = ""; principal = ""; rate = ""; apr = ""
+                            emi = ""; loanAccountNumber = ""; sanctioned = ""; tenure = ""
+                            processingFee = ""; insurance = ""; penalTerms = ""; foreclosureTerms = ""
+                        }
+                    }
+                }) { Text(submitLabel) }
+                if (onCancel != null) {
+                    TextButton(onClick = onCancel) { Text("Cancel") }
                 }
-            }) { Text("Add loan") }
+            }
         }
     }
 }
