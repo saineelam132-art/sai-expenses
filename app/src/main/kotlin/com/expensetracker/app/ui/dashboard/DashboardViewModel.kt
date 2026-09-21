@@ -2,50 +2,61 @@ package com.expensetracker.app.ui.dashboard
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.expensetracker.app.ExpenseTrackerApp
 import com.expensetracker.app.data.db.AccountEntity
-import com.expensetracker.app.data.db.SectorSpend
+import com.expensetracker.app.data.db.LedgerAccountCategory
+import com.expensetracker.app.data.db.LedgerAccountEntity
+import com.expensetracker.app.data.db.LedgerSide
+import com.expensetracker.app.ExpenseTrackerApp
 import com.expensetracker.app.diagnostics.CrashLog
 import com.expensetracker.core.model.Category
+import com.expensetracker.core.model.TransactionKind
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.ZoneId
 
-data class SectorTrend(val category: Category, val thisMonth: Double, val lastMonth: Double) {
-    val jumped: Boolean get() = lastMonth > 0 && thisMonth > lastMonth * 1.3 // >30% jump vs last month
+/**
+ * Cash flow for the current month, across every account combined. Only Expense, Income and
+ * Investment-Buy/Sell count: self-transfers, lending and loan disbursals move money between the
+ * user's own pots rather than in or out of them, so counting them would inflate both sides.
+ */
+data class CashFlow(
+    val incoming: Double = 0.0,
+    val outgoing: Double = 0.0,
+    val invested: Double = 0.0,
+) {
+    val left: Double get() = incoming - outgoing - invested
 }
 
-data class RecurringPayment(val merchant: String, val amount: Double, val occurrences: Int)
+data class SectorSlice(val category: Category, val amount: Double)
 
 data class DashboardUiState(
     val accounts: List<AccountEntity> = emptyList(),
     val totalBalance: Double = 0.0,
-    val currentMonthSpend: List<Pair<Category, Double>> = emptyList(),
-    val trends: List<SectorTrend> = emptyList(),
-    val recurringPayments: List<RecurringPayment> = emptyList(),
-)
+    val cashOnHand: BigDecimal = BigDecimal.ZERO,
+    val cashFlow: CashFlow = CashFlow(),
+    val spendingBySector: List<SectorSlice> = emptyList(),
+) {
+    val monthTotalSpend: Double get() = spendingBySector.sumOf { it.amount }
+}
 
 class DashboardViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
 
-    private val recurring = MutableStateFlow<List<RecurringPayment>>(emptyList())
-
-    // A plain, always-live MutableStateFlow that this ViewModel pushes into from a
-    // supervised collection loop below — never a `combine(...).catch{}.stateIn(...)` chain
-    // collected directly by Compose. That pattern crashed on launch with a NullPointerException
-    // from inside kotlinx.coroutines' combine() internals (surfacing through collectAsState())
-    // that `.catch{}` did not intercept — collectState()'s explicit try/catch below is the fix:
-    // no exception from buildState() can reach the UI layer, ever, regardless of its cause.
+    // Plain MutableStateFlow fed by a supervised loop — never a combine().catch{}.stateIn()
+    // chain collected straight by Compose. An exception thrown while combine() restarts its
+    // upstreams escapes .catch{} and reaches collectAsState() as a fatal crash; the explicit
+    // try/catch below cannot be bypassed that way.
     private val _uiState = MutableStateFlow(DashboardUiState())
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
 
     init {
-        viewModelScope.launch { loadRecurringPayments() }
         viewModelScope.launch { collectState() }
     }
 
@@ -53,54 +64,63 @@ class DashboardViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
         while (true) {
             try {
                 buildState().collect { _uiState.value = it }
-                return // upstream completed normally — nothing left to collect
+                return
             } catch (c: CancellationException) {
                 throw c
             } catch (e: Throwable) {
                 CrashLog.record(app, "DashboardViewModel.buildState", e)
                 _uiState.value = DashboardUiState()
-                delay(1000) // brief backoff, then retry in case the failure was transient
+                delay(1000)
             }
         }
     }
 
-    private suspend fun loadRecurringPayments() {
-        runCatching {
-            app.database.transactionDao().getRepeatedMerchantAmounts()
-        }.onSuccess { repeated ->
-            recurring.value = repeated.map {
-                RecurringPayment(it.merchant, it.amountText.toDoubleOrNull() ?: 0.0, it.occurrences)
-            }
-        }.onFailure {
-            CrashLog.record(app, "DashboardViewModel.loadRecurringPayments", it)
+    fun setCashOnHand(amount: BigDecimal) {
+        viewModelScope.launch {
+            runCatching {
+                val dao = app.database.ledgerAccountDao()
+                val existing = dao.getCashBucket()
+                dao.upsert(
+                    (existing ?: LedgerAccountEntity(
+                        id = "cash-on-hand",
+                        name = "Cash on hand",
+                        side = LedgerSide.ASSET,
+                        category = LedgerAccountCategory.CASH,
+                        balance = BigDecimal.ZERO,
+                    )).copy(balance = amount),
+                )
+            }.onFailure { CrashLog.record(app, "DashboardViewModel.setCashOnHand", it) }
         }
     }
 
-    private fun buildState() = combine(
-        app.database.accountDao().observeAll(),
-        currentMonthSectorFlow(),
-        lastMonthSectorFlow(),
-        recurring,
-    ) { accounts, thisMonth, lastMonth, recurringPayments ->
-        val lastMonthMap = lastMonth.associate { it.category to it.total }
-        val trends = thisMonth.map { SectorTrend(it.category, it.total, lastMonthMap[it.category] ?: 0.0) }
-        DashboardUiState(
-            accounts = accounts,
-            totalBalance = accounts.sumOf { it.latestBalance?.toDouble() ?: 0.0 },
-            currentMonthSpend = thisMonth.map { it.category to it.total },
-            trends = trends.filter { it.jumped },
-            recurringPayments = recurringPayments,
-        )
-    }
-
-    private fun currentMonthSectorFlow() = run {
+    private fun buildState(): Flow<DashboardUiState> {
         val (start, end) = monthRange(LocalDate.now())
-        app.database.transactionDao().observeSectorSpend(start, end)
-    }
+        return combine(
+            app.database.accountDao().observeAll(),
+            app.database.transactionDao().observeSectorSpend(start, end),
+            app.database.transactionDao().observeTotalsByKind(start, end),
+            app.database.ledgerAccountDao().observeAll(),
+        ) { accounts, sectorSpend, kindTotals, ledgerAccounts ->
+            val totals = kindTotals.associate { it.kind to it.total }
+            val invested = (totals[TransactionKind.INVESTMENT_BUY] ?: 0.0) -
+                (totals[TransactionKind.INVESTMENT_SELL] ?: 0.0)
 
-    private fun lastMonthSectorFlow() = run {
-        val (start, end) = monthRange(LocalDate.now().minusMonths(1))
-        app.database.transactionDao().observeSectorSpend(start, end)
+            DashboardUiState(
+                accounts = accounts,
+                totalBalance = accounts.sumOf { it.latestBalance?.toDouble() ?: 0.0 },
+                cashOnHand = ledgerAccounts
+                    .firstOrNull { it.category == LedgerAccountCategory.CASH }?.balance ?: BigDecimal.ZERO,
+                cashFlow = CashFlow(
+                    incoming = totals[TransactionKind.INCOME] ?: 0.0,
+                    outgoing = totals[TransactionKind.EXPENSE] ?: 0.0,
+                    invested = invested,
+                ),
+                spendingBySector = sectorSpend
+                    .filter { it.total > 0.0 }
+                    .map { SectorSlice(it.category, it.total) }
+                    .sortedByDescending { it.amount },
+            )
+        }
     }
 
     private fun monthRange(anyDayInMonth: LocalDate): Pair<Long, Long> {

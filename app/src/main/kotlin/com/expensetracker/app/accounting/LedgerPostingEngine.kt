@@ -108,7 +108,14 @@ class LedgerPostingEngine(
     ) {
         if (contactId == null) return // not yet linked to a Friend — nothing to post
         val contact = contactDao.getById(contactId) ?: return
-        val bucket = getOrCreate(category, side, "$category-$contactId", "${contact.name} (${category.name.lowercase()})", contactId)
+        // Reads as a balance-sheet line ("Ravi — owes you"), since that's where it surfaces:
+        // a receivable is an asset alongside bank balances, a payable a liability alongside Slice.
+        val label = when (category) {
+            LedgerAccountCategory.RECEIVABLE -> "${contact.name} — owes you"
+            LedgerAccountCategory.PAYABLE -> "${contact.name} — you owe"
+            else -> contact.name
+        }
+        val bucket = getOrCreate(category, side, "$category-$contactId", label, contactId)
         save(bucket.copy(balance = clampNonNegative(bucket.balance + amount * sign.toBigDecimal())))
     }
 

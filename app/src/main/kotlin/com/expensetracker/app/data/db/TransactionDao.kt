@@ -6,11 +6,15 @@ import androidx.room.Insert
 import androidx.room.Query
 import androidx.room.Update
 import com.expensetracker.core.model.Category
+import com.expensetracker.core.model.TransactionKind
 import kotlinx.coroutines.flow.Flow
 import java.math.BigDecimal
 import java.time.LocalDateTime
 
 data class SectorSpend(val category: Category, val total: Double)
+
+/** Month totals per accounting kind — the raw material for the cash-flow card. */
+data class KindTotal(val kind: TransactionKind, val total: Double)
 
 @Dao
 interface TransactionDao {
@@ -75,6 +79,18 @@ interface TransactionDao {
            WHERE kind = :kindName AND transactionDateTime BETWEEN :startEpochMillis AND :endEpochMillis""",
     )
     suspend fun sumAmountForKind(kindName: String, startEpochMillis: Long, endEpochMillis: Long): Double
+
+    /**
+     * Live month totals grouped by kind, across every account. One grouped query rather than a
+     * sum-per-kind so the cash-flow card recomputes from a single emission whenever any
+     * transaction is captured or re-confirmed.
+     */
+    @Query(
+        """SELECT kind, COALESCE(SUM(CAST(amount AS REAL)), 0) as total FROM transactions
+           WHERE transactionDateTime BETWEEN :startEpochMillis AND :endEpochMillis
+           GROUP BY kind""",
+    )
+    fun observeTotalsByKind(startEpochMillis: Long, endEpochMillis: Long): Flow<List<KindTotal>>
 
     @Query(
         """SELECT COALESCE(SUM(CAST(interestPortion AS REAL)), 0) FROM transactions
