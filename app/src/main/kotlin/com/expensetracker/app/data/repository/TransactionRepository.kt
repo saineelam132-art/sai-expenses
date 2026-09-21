@@ -125,6 +125,12 @@ class TransactionRepository(
         ledgerPostingEngine.post(context, updated)
     }
 
+    /** Sets or clears the user's free-text note on a transaction — available on any transaction,
+     * auto-captured or manual, editable anytime. Purely informational: no ledger effect. */
+    suspend fun setNote(transaction: TransactionEntity, note: String?) {
+        transactionDao.update(transaction.copy(notes = note?.takeIf { it.isNotBlank() }))
+    }
+
     private fun accountIdFor(parsed: ParsedTransaction): String? {
         val hint = parsed.accountHint ?: return null
         return "${parsed.sourceLabel}-$hint"

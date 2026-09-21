@@ -71,6 +71,13 @@ class TransactionListViewModel(private val app: ExpenseTrackerApp) : ViewModel()
         }
     }
 
+    fun setNote(transaction: TransactionEntity, note: String?) {
+        viewModelScope.launch {
+            runCatching { app.transactionRepository.setNote(transaction, note) }
+                .onFailure { CrashLog.record(app, "setNote", it) }
+        }
+    }
+
     private val _deepLinkedTransaction = MutableStateFlow<TransactionEntity?>(null)
 
     /** Set when opened via a notification tap — looked up directly by id rather than searched

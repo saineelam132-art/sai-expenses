@@ -49,4 +49,7 @@ data class TransactionEntity(
     val linkedLoanId: String? = null,
     val principalPortion: BigDecimal? = null,
     val interestPortion: BigDecimal? = null,
+    /** Free-text note the user attached — available on any transaction, auto-captured or
+     * manual, editable anytime. Never set automatically. */
+    val notes: String? = null,
 )

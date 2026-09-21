@@ -19,12 +19,13 @@ import androidx.room.TypeConverters
     ],
     // v2: added the accounting-engine tables (contacts, ledger_accounts) and new columns on
     // transactions (kind, linkedContactId, linkedLoanId, principalPortion, interestPortion).
-    // v3: added recurring_bills (UPI AutoPay mandate lifecycle tracking). Destructive migration
+    // v3: added recurring_bills (UPI AutoPay mandate lifecycle tracking).
+    // v4: added transactions.notes (free-text note, editable anytime). Destructive migration
     // rather than a hand-written Migration — this project has no released users yet, so
     // preserving old local test data isn't worth the risk of an unverifiable migration (this
     // environment has no Android SDK to actually run one against). Uninstall and reinstall the
     // app after this update.
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)

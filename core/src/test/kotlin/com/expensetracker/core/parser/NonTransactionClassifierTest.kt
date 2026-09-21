@@ -74,4 +74,28 @@ class NonTransactionClassifierTest {
         val msg = "Rs.500.00 debited from A/c XX1234 on 05-08-24 transfer to MOHAN SHOP Ref No 123456789012 -SBI"
         assertNull(NonTransactionClassifier.classify(msg, "SBIINB"))
     }
+
+    @Test
+    fun `future-tense subscription renewal reminder is discarded`() {
+        val msg = "Your Claude subscription renews for Rs.2000 soon"
+        assertEquals(NonTransactionEvent.Discard, NonTransactionClassifier.classify(msg, "VM-CLAUDE"))
+    }
+
+    @Test
+    fun `EMI due reminder with no reference or balance is discarded`() {
+        val msg = "Reminder: your EMI of Rs.3000 is due on 05-Oct-2026"
+        assertEquals(NonTransactionEvent.Discard, NonTransactionClassifier.classify(msg, "VM-BANK"))
+    }
+
+    @Test
+    fun `reminder wording with a real reference ID is not discarded`() {
+        val msg = "Your Netflix subscription renewal of Rs.500 is due on 05-10-2026 UPI Ref No 987654321012 -HDFC"
+        assertNull(NonTransactionClassifier.classify(msg, "HDFCBK"))
+    }
+
+    @Test
+    fun `IPPB-style debit with no reference match and no future-tense wording is not discarded`() {
+        val msg = "Your account has been successfully debited with Rs.199 on 280626 towards Netflix for Creat REF987 -IPPB"
+        assertNull(NonTransactionClassifier.classify(msg, "VM-IPPB-S"))
+    }
 }

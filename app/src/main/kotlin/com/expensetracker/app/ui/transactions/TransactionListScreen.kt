@@ -12,6 +12,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -53,6 +54,7 @@ fun TransactionListScreen(factory: AppViewModelFactory, initialTransactionId: Lo
     var tab by remember { mutableStateOf(0) }
     var editing by remember { mutableStateOf<TransactionEntity?>(null) }
     var editingKind by remember { mutableStateOf<TransactionEntity?>(null) }
+    var editingNote by remember { mutableStateOf<TransactionEntity?>(null) }
 
     // Deep-linked from a notification tap — looked up directly rather than searched for in the
     // (paged) list, since the tapped transaction might not be within the currently-loaded pages.
@@ -74,9 +76,19 @@ fun TransactionListScreen(factory: AppViewModelFactory, initialTransactionId: Lo
         }
 
         if (tab == 0) {
-            PagedTransactionList(allItems, onSelectCategory = { editing = it }, onSelectKind = { editingKind = it })
+            PagedTransactionList(
+                allItems,
+                onSelectCategory = { editing = it },
+                onSelectKind = { editingKind = it },
+                onSelectNote = { editingNote = it },
+            )
         } else {
-            PagedTransactionList(reviewItems, onSelectCategory = { editing = it }, onSelectKind = { editingKind = it })
+            PagedTransactionList(
+                reviewItems,
+                onSelectCategory = { editing = it },
+                onSelectKind = { editingKind = it },
+                onSelectNote = { editingNote = it },
+            )
         }
     }
 
@@ -103,6 +115,17 @@ fun TransactionListScreen(factory: AppViewModelFactory, initialTransactionId: Lo
             },
         )
     }
+
+    editingNote?.let { transaction ->
+        NoteEditorDialog(
+            transaction = transaction,
+            onDismiss = { editingNote = null },
+            onConfirm = { note ->
+                viewModel.setNote(transaction, note)
+                editingNote = null
+            },
+        )
+    }
 }
 
 @Composable
@@ -110,6 +133,7 @@ private fun PagedTransactionList(
     items: LazyPagingItems<TransactionEntity>,
     onSelectCategory: (TransactionEntity) -> Unit,
     onSelectKind: (TransactionEntity) -> Unit,
+    onSelectNote: (TransactionEntity) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -125,6 +149,7 @@ private fun PagedTransactionList(
                     transaction,
                     onClickCategory = { onSelectCategory(transaction) },
                     onClickKind = { onSelectKind(transaction) },
+                    onClickNote = { onSelectNote(transaction) },
                 )
             }
         }
@@ -143,7 +168,12 @@ private fun PagedTransactionList(
 }
 
 @Composable
-private fun TransactionRow(transaction: TransactionEntity, onClickCategory: () -> Unit, onClickKind: () -> Unit) {
+private fun TransactionRow(
+    transaction: TransactionEntity,
+    onClickCategory: () -> Unit,
+    onClickKind: () -> Unit,
+    onClickNote: () -> Unit,
+) {
     val inr = remember { NumberFormat.getCurrencyInstance(Locale("en", "IN")) }
     val dateFormatter = remember { DateTimeFormatter.ofPattern("dd MMM, HH:mm") }
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -189,9 +219,39 @@ private fun TransactionRow(transaction: TransactionEntity, onClickCategory: () -
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
+                TextButton(onClick = onClickNote) {
+                    Text(
+                        transaction.notes?.takeIf { it.isNotBlank() } ?: "Add note",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (transaction.notes.isNullOrBlank()) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                    )
+                }
             }
         }
     }
+}
+
+@Composable
+private fun NoteEditorDialog(transaction: TransactionEntity, onDismiss: () -> Unit, onConfirm: (String?) -> Unit) {
+    var text by remember(transaction.id) { mutableStateOf(transaction.notes.orEmpty()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Note: ${transaction.merchant ?: "this transaction"}") },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                label = { Text("Note") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = { TextButton(onClick = { onConfirm(text) }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable
