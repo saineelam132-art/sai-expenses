@@ -71,6 +71,9 @@ object TransactionCaptureProcessor {
                         bankLabel = event.sourceLabel,
                         lastFourDigits = accountHint,
                         latestBalance = event.balance,
+                        // A declined-payment balance is current as of now; nothing moved, so
+                        // anchoring here just means later transactions stack on top of it.
+                        balanceAsOfMillis = System.currentTimeMillis(),
                         lastUpdated = System.currentTimeMillis(),
                     ),
                 )

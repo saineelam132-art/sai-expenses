@@ -6,6 +6,7 @@ import android.content.Intent
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.expensetracker.app.data.db.TransactionEntity
+import com.expensetracker.app.data.db.sectorLabel
 import com.expensetracker.app.ui.MainActivity
 import com.expensetracker.core.model.TransactionType
 import java.math.BigDecimal
@@ -37,11 +38,11 @@ object TransactionNotifier {
         } else if (transaction.isLargeTransaction) {
             title = "Large transaction: $amountText"
             body = "$amountText ${verb(transaction.type)} at $merchantText — categorized under " +
-                "${transaction.category.displayName}.$balanceText Tap to confirm the category."
+                "${transaction.sectorLabel}.$balanceText Tap to confirm the category."
             channel = NotificationChannels.LARGE_TRANSACTIONS
         } else {
             title = "$amountText ${verb(transaction.type)}"
-            body = "At $merchantText — categorized under ${transaction.category.displayName}.$balanceText"
+            body = "At $merchantText — categorized under ${transaction.sectorLabel}.$balanceText"
             channel = NotificationChannels.TRANSACTIONS
         }
 

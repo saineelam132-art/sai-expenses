@@ -8,10 +8,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Tab
@@ -35,6 +38,7 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import com.expensetracker.app.data.db.ContactEntity
 import com.expensetracker.app.data.db.LedgerAccountEntity
 import com.expensetracker.app.data.db.TransactionEntity
+import com.expensetracker.app.data.db.sectorLabel
 import com.expensetracker.app.ui.AppViewModelFactory
 import com.expensetracker.core.model.Category
 import com.expensetracker.core.model.TransactionKind
@@ -52,6 +56,7 @@ fun TransactionListScreen(factory: AppViewModelFactory, initialTransactionId: Lo
     val needsReviewCount by viewModel.needsReviewCount.collectAsState()
     val contacts by viewModel.contacts.collectAsState()
     val loans by viewModel.loans.collectAsState()
+    val customCategories by viewModel.customCategories.collectAsState()
     var tab by remember { mutableStateOf(0) }
     var editing by remember { mutableStateOf<TransactionEntity?>(null) }
     var editingKind by remember { mutableStateOf<TransactionEntity?>(null) }
@@ -98,9 +103,14 @@ fun TransactionListScreen(factory: AppViewModelFactory, initialTransactionId: Lo
     editing?.let { transaction ->
         CategoryPickerDialog(
             transaction = transaction,
+            customCategories = customCategories,
             onDismiss = { editing = null },
             onConfirm = { category ->
                 viewModel.correctCategory(transaction, category)
+                editing = null
+            },
+            onConfirmCustom = { name ->
+                viewModel.setCustomCategory(transaction, name)
                 editing = null
             },
         )
@@ -248,7 +258,7 @@ private fun ReviewRow(
             }
             Text(transaction.merchant ?: "Unknown payee", style = MaterialTheme.typography.bodyMedium)
             Text(
-                "Auto-tagged: ${transaction.category.displayName}",
+                "Auto-tagged: ${transaction.sectorLabel}",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -290,7 +300,7 @@ private fun TransactionRow(
             }
             Text(transaction.merchant ?: "Unknown payee", style = MaterialTheme.typography.bodyMedium)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                TextButton(onClick = onClickCategory) { Text(transaction.category.displayName, style = MaterialTheme.typography.labelMedium) }
+                TextButton(onClick = onClickCategory) { Text(transaction.sectorLabel, style = MaterialTheme.typography.labelMedium) }
                 TextButton(onClick = onClickKind) {
                     Text(
                         transaction.kind.displayName,
@@ -422,18 +432,58 @@ private fun KindPickerDialog(
     )
 }
 
+/**
+ * The categorize popup. Below the built-in sectors it lists any the user has invented, then a
+ * free-text box for a new one — typing a sector here saves this transaction under it *and*
+ * remembers it, so it appears in this list for every future transaction.
+ */
 @Composable
-private fun CategoryPickerDialog(transaction: TransactionEntity, onDismiss: () -> Unit, onConfirm: (Category) -> Unit) {
+private fun CategoryPickerDialog(
+    transaction: TransactionEntity,
+    customCategories: List<String>,
+    onDismiss: () -> Unit,
+    onConfirm: (Category) -> Unit,
+    onConfirmCustom: (String) -> Unit,
+) {
+    var typed by remember { mutableStateOf("") }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Categorize: ${transaction.merchant ?: "this transaction"}") },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 Category.entries.filter { it != Category.UNCATEGORIZED }.forEach { category ->
                     TextButton(onClick = { onConfirm(category) }, modifier = Modifier.fillMaxWidth()) {
                         Text(category.displayName, modifier = Modifier.fillMaxWidth())
                     }
                 }
+
+                if (customCategories.isNotEmpty()) {
+                    HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                    Text(
+                        "Your categories",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    customCategories.forEach { name ->
+                        TextButton(onClick = { onConfirmCustom(name) }, modifier = Modifier.fillMaxWidth()) {
+                            Text(name, modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                }
+
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                OutlinedTextField(
+                    value = typed,
+                    onValueChange = { typed = it },
+                    label = { Text("Other — type your own") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                TextButton(
+                    onClick = { if (typed.isNotBlank()) onConfirmCustom(typed.trim()) },
+                    enabled = typed.isNotBlank(),
+                ) { Text("Use this category") }
             }
         },
         confirmButton = {},

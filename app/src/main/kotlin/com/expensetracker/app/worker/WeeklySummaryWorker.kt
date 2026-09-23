@@ -9,6 +9,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.expensetracker.app.ExpenseTrackerApp
+import com.expensetracker.app.data.db.sectorLabel
 import com.expensetracker.app.notify.NotificationChannels
 import com.expensetracker.core.model.TransactionKind
 import kotlinx.coroutines.flow.first
@@ -40,7 +41,7 @@ class WeeklySummaryWorker(context: Context, params: WorkerParameters) : Coroutin
             .sumOf { it.interestPortion?.toDouble() ?: 0.0 }
 
         val totalSpent = expenses.sumOf { it.amount!!.toDouble() } + loanInterest
-        val topSectors = expenses.groupBy { it.category }
+        val topSectors = expenses.groupBy { it.sectorLabel }
             .mapValues { (_, txns) -> txns.sumOf { it.amount!!.toDouble() } }
             .entries.sortedByDescending { it.value }
             .take(3)
@@ -59,7 +60,7 @@ class WeeklySummaryWorker(context: Context, params: WorkerParameters) : Coroutin
             }
         }
 
-        postSummary(app.applicationContext, totalSpent, topSectors.map { it.key.displayName to it.value }) { inr ->
+        postSummary(app.applicationContext, totalSpent, topSectors.map { it.key to it.value }) { inr ->
             if (haveFullTrend) {
                 val delta = currentBalanceTotal - weekAgoBalanceTotal
                 val direction = if (delta >= 0) "up" else "down"

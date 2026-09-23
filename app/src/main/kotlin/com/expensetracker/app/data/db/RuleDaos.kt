@@ -43,6 +43,9 @@ interface KeywordRuleDao {
     suspend fun count(): Int
 }
 
+/** Net movement on one account since its balance was last anchored — see [AccountEntity]. */
+data class AccountDelta(val accountId: String, val delta: Double)
+
 @Dao
 interface AccountDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -53,6 +56,26 @@ interface AccountDao {
 
     @Query("SELECT * FROM accounts WHERE id = :id")
     suspend fun getById(id: String): AccountEntity?
+
+    /**
+     * Signed sum of every transaction recorded against each account *after* that account's
+     * anchored balance timestamp. Direction comes from the SMS's own debit/credit flag, which is
+     * already right for every kind that moves a bank balance (a card spend, salary in, one leg of
+     * a transfer, an ATM withdrawal, a stock purchase), so no kind-specific rules are needed here.
+     * An account with no anchor yet counts its whole history.
+     */
+    @Query(
+        """SELECT t.accountId AS accountId,
+                  COALESCE(SUM(CASE WHEN t.type = 'CREDIT' THEN CAST(t.amount AS REAL)
+                                    ELSE -CAST(t.amount AS REAL) END), 0) AS delta
+           FROM transactions t
+           WHERE t.accountId IS NOT NULL
+             AND t.amount IS NOT NULL
+             AND t.transactionDateTime >
+                 COALESCE((SELECT a.balanceAsOfMillis FROM accounts a WHERE a.id = t.accountId), 0)
+           GROUP BY t.accountId""",
+    )
+    fun observeBalanceDeltas(): Flow<List<AccountDelta>>
 }
 
 @Dao

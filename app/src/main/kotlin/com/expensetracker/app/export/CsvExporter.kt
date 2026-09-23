@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.core.content.FileProvider
 import com.expensetracker.app.data.db.TransactionEntity
+import com.expensetracker.app.data.db.sectorLabel
 import java.io.File
 import java.time.format.DateTimeFormatter
 
@@ -25,7 +26,7 @@ object CsvExporter {
                         t.transactionDateTime.format(dateFormatter),
                         t.type.name,
                         t.merchant.orEmpty(),
-                        t.category.displayName,
+                        t.sectorLabel,
                         t.amount?.toPlainString().orEmpty(),
                         t.availableBalance?.toPlainString().orEmpty(),
                         t.accountId.orEmpty(),

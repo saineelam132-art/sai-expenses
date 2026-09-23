@@ -52,4 +52,16 @@ data class TransactionEntity(
     /** Free-text note the user attached — available on any transaction, auto-captured or
      * manual, editable anytime. Never set automatically. */
     val notes: String? = null,
+    /**
+     * A user-defined sector (see [CustomCategoryEntity]), set only when the user typed one in the
+     * categorize dialog. When present it *replaces* [category] everywhere spending is grouped —
+     * summaries, the pie chart, budgets — while [category] stays at Uncategorized underneath,
+     * since the built-in enum has no constant to hold it.
+     */
+    val customCategory: String? = null,
 )
+
+/** What this transaction should be grouped and labeled under: the user's own sector if they set
+ * one, otherwise the built-in one. */
+val TransactionEntity.sectorLabel: String
+    get() = customCategory?.takeIf { it.isNotBlank() } ?: category.displayName

@@ -2,7 +2,6 @@ package com.expensetracker.app.ui.dashboard
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.expensetracker.app.data.db.AccountEntity
 import com.expensetracker.app.data.db.LedgerAccountCategory
 import com.expensetracker.app.data.db.LedgerAccountEntity
 import com.expensetracker.app.data.db.LedgerSide
@@ -35,10 +34,20 @@ data class CashFlow(
     val left: Double get() = incoming - outgoing - invested
 }
 
-data class SectorSlice(val category: Category, val amount: Double)
+/** One sector's spend for the month. [label] is what the user sees — their own sector name when
+ * they typed one, otherwise the built-in sector's name. */
+data class SectorSlice(
+    val label: String,
+    val amount: Double,
+    val category: Category,
+    val isCustom: Boolean,
+)
+
+/** One bank account's displayed balance: its anchored figure plus the transactions since. */
+data class AccountBalance(val label: String, val balance: Double)
 
 data class DashboardUiState(
-    val accounts: List<AccountEntity> = emptyList(),
+    val accounts: List<AccountBalance> = emptyList(),
     val totalBalance: Double = 0.0,
     val cashOnHand: BigDecimal = BigDecimal.ZERO,
     val cashFlow: CashFlow = CashFlow(),
@@ -100,14 +109,25 @@ class DashboardViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
             app.database.transactionDao().observeSectorSpend(start, end),
             app.database.transactionDao().observeTotalsByKind(start, end),
             app.database.ledgerAccountDao().observeAll(),
-        ) { accounts, sectorSpend, kindTotals, ledgerAccounts ->
+            app.database.accountDao().observeBalanceDeltas(),
+        ) { accounts, sectorSpend, kindTotals, ledgerAccounts, deltas ->
             val totals = kindTotals.associate { it.kind to it.total }
             val invested = (totals[TransactionKind.INVESTMENT_BUY] ?: 0.0) -
                 (totals[TransactionKind.INVESTMENT_SELL] ?: 0.0)
 
+            // Anchored bank figure plus everything since it — see AccountEntity for why the
+            // reported balance alone isn't enough.
+            val deltaByAccount = deltas.associate { it.accountId to it.delta }
+            val accountBalances = accounts.map {
+                AccountBalance(
+                    label = "${it.bankLabel} ••${it.lastFourDigits ?: "----"}",
+                    balance = (it.latestBalance?.toDouble() ?: 0.0) + (deltaByAccount[it.id] ?: 0.0),
+                )
+            }
+
             DashboardUiState(
-                accounts = accounts,
-                totalBalance = accounts.sumOf { it.latestBalance?.toDouble() ?: 0.0 },
+                accounts = accountBalances,
+                totalBalance = accountBalances.sumOf { it.balance },
                 cashOnHand = ledgerAccounts
                     .firstOrNull { it.category == LedgerAccountCategory.CASH }?.balance ?: BigDecimal.ZERO,
                 cashFlow = CashFlow(
@@ -115,9 +135,23 @@ class DashboardViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
                     outgoing = totals[TransactionKind.EXPENSE] ?: 0.0,
                     invested = invested,
                 ),
+                // Grouped by what's displayed, so two rows that show the same sector name (a
+                // built-in and a custom one) never appear as separate slices.
                 spendingBySector = sectorSpend
                     .filter { it.total > 0.0 }
-                    .map { SectorSlice(it.category, it.total) }
+                    .map {
+                        val custom = it.customCategory?.takeIf { name -> name.isNotBlank() }
+                        SectorSlice(
+                            label = custom ?: it.category.displayName,
+                            amount = it.total,
+                            category = it.category,
+                            isCustom = custom != null,
+                        )
+                    }
+                    .groupBy { it.label }
+                    .map { (label, slices) ->
+                        slices.first().copy(label = label, amount = slices.sumOf { s -> s.amount })
+                    }
                     .sortedByDescending { it.amount },
             )
         }

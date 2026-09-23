@@ -50,7 +50,7 @@ fun DashboardScreen(factory: AppViewModelFactory) {
     // shows more colors at once than the palette is validated for.
     val slices = remember(state.spendingBySector) {
         state.spendingBySector
-            .map { ChartSlice(it.category.displayName, it.amount, SectorColors.forCategory(it.category)) }
+            .map { ChartSlice(it.label, it.amount, it.color()) }
             .foldTail(keep = 7, otherColor = SectorColors.Untagged)
     }
 
@@ -94,12 +94,9 @@ private fun BalanceCard(state: DashboardUiState, inr: NumberFormat) {
         }
         state.accounts.forEach { account ->
             Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(account.label, style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    "${account.bankLabel} ••${account.lastFourDigits ?: "----"}",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Text(
-                    account.latestBalance?.let { inr.format(it) } ?: "—",
+                    inr.format(account.balance),
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Bold,
                 )
@@ -193,14 +190,17 @@ private fun SpendingSummaryCard(state: DashboardUiState, inr: NumberFormat) {
             return@SectionCard
         }
         SectorBarChart(
-            slices = state.spendingBySector.map {
-                ChartSlice(it.category.displayName, it.amount, SectorColors.forCategory(it.category))
-            },
+            slices = state.spendingBySector.map { ChartSlice(it.label, it.amount, it.color()) },
             valueLabel = { inr.format(it) },
             modifier = Modifier.padding(top = 12.dp),
         )
     }
 }
+
+/** A custom sector's colour comes from its name, a built-in one's from the fixed sector map —
+ * either way the same sector keeps the same colour everywhere it appears. */
+private fun SectorSlice.color() =
+    if (isCustom) SectorColors.forCustom(label) else SectorColors.forCategory(category)
 
 @Composable
 private fun SpendBySectorCard(slices: List<ChartSlice>, monthTotal: Double, inr: NumberFormat) {

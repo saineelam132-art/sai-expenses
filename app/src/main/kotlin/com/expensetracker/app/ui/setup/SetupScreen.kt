@@ -76,6 +76,7 @@ fun SetupScreen(factory: AppViewModelFactory) {
                 schedule = viewModel.scheduleFor(loan.id).collectAsState().value,
                 onDelete = { viewModel.deleteLedgerAccount(loan.id) },
                 onSave = { viewModel.updateLoan(loan.id, it) },
+                onAdjustBalance = { viewModel.adjustLedgerBalance(loan.id, it) },
                 onAddScheduleRow = viewModel::addScheduleRow,
                 onDeleteScheduleRow = { viewModel.deleteScheduleRow(loan.id, it) },
             )
@@ -89,6 +90,7 @@ fun SetupScreen(factory: AppViewModelFactory) {
                 asset,
                 onDelete = { viewModel.deleteLedgerAccount(asset.id) },
                 onSave = { name, value -> viewModel.updateManualAsset(asset.id, name, value) },
+                onAdjustBalance = { viewModel.adjustLedgerBalance(asset.id, it) },
             )
         }
         item { AddManualAssetForm(onAdd = viewModel::addManualAsset) }
@@ -159,6 +161,7 @@ private fun LoanRow(
     schedule: List<LoanScheduleEntity>,
     onDelete: () -> Unit,
     onSave: (LoanDetails) -> Unit,
+    onAdjustBalance: (BigDecimal) -> Unit,
     onAddScheduleRow: (LoanScheduleEntity) -> Unit,
     onDeleteScheduleRow: (Int) -> Unit,
 ) {
@@ -206,6 +209,11 @@ private fun LoanRow(
                     TextButton(onClick = onDelete) { Text("Remove") }
                 }
             }
+            BalanceAdjustRow(
+                increaseLabel = "Record draw",
+                decreaseLabel = "Record repayment",
+                onAdjust = onAdjustBalance,
+            )
             TextButton(onClick = { showSchedule = !showSchedule }) {
                 Text(if (showSchedule) "Hide schedule" else "Schedule (${schedule.size})")
             }
@@ -223,6 +231,43 @@ private fun LoanRow(
                     onAdd = onAddScheduleRow,
                 )
             }
+        }
+    }
+}
+
+/**
+ * Adds to or subtracts from an account's balance — a new draw, a repayment, or a top-up that no
+ * SMS captured. Deliberately a delta rather than a replacement, so recording a ₹500 repayment
+ * doesn't require working out what the new total should be.
+ */
+@Composable
+private fun BalanceAdjustRow(
+    increaseLabel: String,
+    decreaseLabel: String,
+    onAdjust: (BigDecimal) -> Unit,
+) {
+    var amount by remember { mutableStateOf("") }
+    Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+        OutlinedTextField(
+            value = amount,
+            onValueChange = { amount = it },
+            label = { Text("Adjust by (₹)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = {
+                amount.toBigDecimalOrNull()?.let {
+                    onAdjust(it)
+                    amount = ""
+                }
+            }) { Text("+ $increaseLabel") }
+            TextButton(onClick = {
+                amount.toBigDecimalOrNull()?.let {
+                    onAdjust(it.negate())
+                    amount = ""
+                }
+            }) { Text("− $decreaseLabel") }
         }
     }
 }
@@ -349,6 +394,7 @@ private fun ManualAssetRow(
     asset: LedgerAccountEntity,
     onDelete: () -> Unit,
     onSave: (name: String, value: BigDecimal) -> Unit,
+    onAdjustBalance: (BigDecimal) -> Unit,
 ) {
     var editing by remember { mutableStateOf(false) }
     var name by remember(asset) { mutableStateOf(asset.name) }
@@ -379,6 +425,7 @@ private fun ManualAssetRow(
                     TextButton(onClick = { editing = true }) { Text("Edit") }
                     TextButton(onClick = onDelete) { Text("Remove") }
                 }
+                BalanceAdjustRow(increaseLabel = "Add", decreaseLabel = "Withdraw", onAdjust = onAdjustBalance)
             }
         }
     }

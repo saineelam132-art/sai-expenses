@@ -11,7 +11,9 @@ import kotlinx.coroutines.flow.Flow
 import java.math.BigDecimal
 import java.time.LocalDateTime
 
-data class SectorSpend(val category: Category, val total: Double)
+/** Spending grouped by the sector it's shown under: [customCategory] when the user typed one,
+ * otherwise [category]. */
+data class SectorSpend(val category: Category, val customCategory: String?, val total: Double)
 
 /** Month totals per accounting kind — the raw material for the cash-flow card. */
 data class KindTotal(val kind: TransactionKind, val total: Double)
@@ -58,9 +60,9 @@ interface TransactionDao {
     // really a Self-Transfer, a Lent payment, or a Loan-Disbursed proceeds movement isn't real
     // spending in any sector and must not inflate these figures (see TransactionKind).
     @Query(
-        """SELECT category, SUM(CAST(amount AS REAL)) as total FROM transactions
+        """SELECT category, customCategory, SUM(CAST(amount AS REAL)) as total FROM transactions
            WHERE kind = 'EXPENSE' AND transactionDateTime BETWEEN :startEpochMillis AND :endEpochMillis
-           GROUP BY category""",
+           GROUP BY category, customCategory""",
     )
     fun observeSectorSpend(startEpochMillis: Long, endEpochMillis: Long): Flow<List<SectorSpend>>
 
@@ -134,6 +136,10 @@ interface TransactionDao {
         windowStartMillis: Long,
         windowEndMillis: Long,
     ): TransactionEntity?
+
+    /** Moves transactions from a ledger account being merged away onto the one that survives. */
+    @Query("UPDATE transactions SET linkedLoanId = :newLoanId WHERE linkedLoanId = :oldLoanId")
+    suspend fun repointLinkedLoan(oldLoanId: String, newLoanId: String)
 
     /**
      * Removes the one-time processing/insurance charges logged when a loan was set up, so

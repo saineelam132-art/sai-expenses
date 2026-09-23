@@ -10,6 +10,7 @@ import com.expensetracker.app.data.db.LedgerAccountCategory
 import com.expensetracker.app.data.db.LedgerAccountDao
 import com.expensetracker.app.data.db.LedgerAccountEntity
 import com.expensetracker.app.data.db.LedgerSide
+import com.expensetracker.app.data.db.TransactionDao
 import com.expensetracker.app.data.repository.RoomMerchantRuleStore
 import com.expensetracker.app.data.repository.SettingsRepository
 import com.expensetracker.app.data.repository.TransactionRepository
@@ -63,7 +64,7 @@ class ExpenseTrackerApp : Application() {
         // so the capture pipeline never races an empty cache.
         val keywordRules = runBlocking(Dispatchers.IO) {
             merchantRuleStore.preload()
-            ensureSliceLedgerAccountSeeded(database.ledgerAccountDao())
+            ensureSliceLedgerAccountSeeded(database.ledgerAccountDao(), database.transactionDao())
             loadOrSeedKeywordRules(database.keywordRuleDao())
         }
         categoryEngine = CategoryEngine(keywordRules, merchantRuleStore)
@@ -85,6 +86,7 @@ class ExpenseTrackerApp : Application() {
             categoryEngine,
             typeInferenceEngine,
             ledgerPostingEngine,
+            database.customCategoryDao(),
         )
 
         WeeklySummaryWorker.schedule(this)
@@ -100,9 +102,22 @@ class ExpenseTrackerApp : Application() {
  * unlike bank accounts it must exist before the first Slice transaction is posted, or
  * [LedgerPostingEngine]'s "no linked loan yet — nothing to post" safety check (correct for a
  * user-added loan that genuinely doesn't exist yet) would silently no-op every Slice posting too.
+ *
+ * It also **merges duplicates**. Seeding created a row with the fixed id "slice" while adding a
+ * loan called Slice in Setup created a second one under a random id, so the balance sheet showed
+ * two Slice entries and transactions moved the one the user wasn't looking at. The user's own row
+ * wins (their entered balance is the real opening figure), every transaction pointing at a
+ * discarded row is repointed, and the leftovers are deleted.
  */
-private suspend fun ensureSliceLedgerAccountSeeded(ledgerAccountDao: LedgerAccountDao) {
-    if (ledgerAccountDao.getById(SLICE_LEDGER_ACCOUNT_ID) == null) {
+private suspend fun ensureSliceLedgerAccountSeeded(
+    ledgerAccountDao: LedgerAccountDao,
+    transactionDao: TransactionDao,
+) {
+    val sliceAccounts = ledgerAccountDao.getAllOnce().filter {
+        it.category == LedgerAccountCategory.LOAN && it.name.trim().equals("slice", ignoreCase = true)
+    }
+
+    if (sliceAccounts.isEmpty()) {
         ledgerAccountDao.upsert(
             LedgerAccountEntity(
                 id = SLICE_LEDGER_ACCOUNT_ID,
@@ -112,5 +127,18 @@ private suspend fun ensureSliceLedgerAccountSeeded(ledgerAccountDao: LedgerAccou
                 balance = BigDecimal.ZERO,
             ),
         )
+        return
+    }
+
+    // Prefer a row the user set up themselves (it carries their opening balance and loan terms)
+    // over the placeholder the app seeded; between equals, the larger balance.
+    val survivor = sliceAccounts.sortedWith(
+        compareByDescending<LedgerAccountEntity> { it.id != SLICE_LEDGER_ACCOUNT_ID }
+            .thenByDescending { it.balance },
+    ).first()
+
+    sliceAccounts.filter { it.id != survivor.id }.forEach { duplicate ->
+        transactionDao.repointLinkedLoan(duplicate.id, survivor.id)
+        ledgerAccountDao.delete(duplicate.id)
     }
 }

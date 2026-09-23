@@ -5,6 +5,8 @@ import com.expensetracker.app.accounting.LedgerPostingEngine
 import com.expensetracker.app.accounting.TypeInferenceEngine
 import com.expensetracker.app.data.db.AccountDao
 import com.expensetracker.app.data.db.AccountEntity
+import com.expensetracker.app.data.db.CustomCategoryDao
+import com.expensetracker.app.data.db.CustomCategoryEntity
 import com.expensetracker.app.data.db.TransactionDao
 import com.expensetracker.app.data.db.TransactionEntity
 import com.expensetracker.core.categorize.CategoryEngine
@@ -14,6 +16,7 @@ import com.expensetracker.core.model.TransactionKind
 import com.expensetracker.core.model.TransactionType
 import java.math.BigDecimal
 import java.time.LocalDateTime
+import java.time.ZoneId
 
 class TransactionRepository(
     private val transactionDao: TransactionDao,
@@ -21,6 +24,7 @@ class TransactionRepository(
     private val categoryEngine: CategoryEngine,
     private val typeInferenceEngine: TypeInferenceEngine,
     private val ledgerPostingEngine: LedgerPostingEngine,
+    private val customCategoryDao: CustomCategoryDao,
 ) {
     /**
      * Runs a freshly parsed message through categorization + kind inference, persists it, posts
@@ -66,12 +70,17 @@ class TransactionRepository(
         val saved = entity.copy(id = id)
 
         if (parsed.availableBalance != null && accountId != null) {
+            // Re-anchor: this balance is the bank's own figure *including* this transaction, so
+            // the anchor timestamp is this transaction's own time — anything strictly later is
+            // what gets added on top when the balance is displayed.
             accountDao.upsert(
                 AccountEntity(
                     id = accountId,
                     bankLabel = parsed.sourceLabel,
                     lastFourDigits = parsed.accountHint,
                     latestBalance = parsed.availableBalance,
+                    balanceAsOfMillis = saved.transactionDateTime.atZone(ZoneId.systemDefault())
+                        .toInstant().toEpochMilli(),
                     lastUpdated = System.currentTimeMillis(),
                 ),
             )
@@ -81,11 +90,54 @@ class TransactionRepository(
         return saved
     }
 
-    /** User corrected a transaction's category from the review/transaction list screen. */
-    suspend fun correctCategory(transaction: TransactionEntity, category: Category) {
+    /**
+     * User corrected a transaction's category from the review/transaction list screen.
+     *
+     * Tagging something as Investments also sets its accounting **kind**, because that's the only
+     * field the ledger reads: without this, marking a stock purchase "Investments" changed its
+     * colour on the pie chart and nothing else — the money never left the account and the
+     * Investments asset never grew. A debit becomes a buy, a credit a sale.
+     */
+    suspend fun correctCategory(context: Context, transaction: TransactionEntity, category: Category) {
         transaction.merchant?.let { categoryEngine.correctCategory(it, category) }
+        val recategorized = transaction.copy(
+            category = category,
+            customCategory = null,
+            categoryConfident = true,
+            needsReview = false,
+            userReviewed = true,
+        )
+
+        val investmentKind = when {
+            category != Category.INVESTMENTS -> null
+            transaction.type == TransactionType.CREDIT -> TransactionKind.INVESTMENT_SELL
+            else -> TransactionKind.INVESTMENT_BUY
+        }
+        if (investmentKind != null && transaction.kind != investmentKind) {
+            correctKind(context, recategorized, investmentKind)
+            return
+        }
+        transactionDao.update(recategorized)
+    }
+
+    /**
+     * User typed a sector of their own (see [com.expensetracker.app.data.db.CustomCategoryEntity]).
+     * Stored alongside the built-in enum rather than in it, and remembered so it's offered again.
+     */
+    suspend fun setCustomCategory(transaction: TransactionEntity, name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return
+        val existing = customCategoryDao.findByName(trimmed)
+        val canonical = existing?.name ?: trimmed
+        if (existing == null) customCategoryDao.upsert(CustomCategoryEntity(name = canonical))
         transactionDao.update(
-            transaction.copy(category = category, categoryConfident = true, needsReview = false, userReviewed = true),
+            transaction.copy(
+                customCategory = canonical,
+                category = Category.UNCATEGORIZED,
+                categoryConfident = true,
+                needsReview = false,
+                userReviewed = true,
+            ),
         )
     }
 

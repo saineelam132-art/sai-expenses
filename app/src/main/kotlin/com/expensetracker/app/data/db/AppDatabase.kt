@@ -17,6 +17,7 @@ import androidx.room.TypeConverters
         LedgerAccountEntity::class,
         RecurringBillEntity::class,
         LoanScheduleEntity::class,
+        CustomCategoryEntity::class,
     ],
     // v2: added the accounting-engine tables (contacts, ledger_accounts) and new columns on
     // transactions (kind, linkedContactId, linkedLoanId, principalPortion, interestPortion).
@@ -25,12 +26,15 @@ import androidx.room.TypeConverters
     // v5: added loan_schedule (stored installment-by-installment repayment schedule) and the
     // loan-agreement fields on ledger_accounts (loan account no., sanctioned amount, tenure,
     // APR, fees, penal/foreclosure terms); dropped ledger_accounts.lastAccrualDate, which only
-    // existed for the formula-based interest split that schedules replace. Destructive migration
+    // existed for the formula-based interest split that schedules replace.
+    // v6: added accounts.balanceAsOfMillis (bank balances are now an anchor plus the
+    // transactions since, so a bank that omits balances on debits no longer freezes the figure),
+    // transactions.customCategory, and the custom_categories table. Destructive migration
     // rather than a hand-written Migration — this project has no released users yet, so
     // preserving old local test data isn't worth the risk of an unverifiable migration (this
     // environment has no Android SDK to actually run one against). Uninstall and reinstall the
     // app after this update.
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -44,6 +48,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun ledgerAccountDao(): LedgerAccountDao
     abstract fun recurringBillDao(): RecurringBillDao
     abstract fun loanScheduleDao(): LoanScheduleDao
+    abstract fun customCategoryDao(): CustomCategoryDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null

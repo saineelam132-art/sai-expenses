@@ -206,6 +206,19 @@ class SetupViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
         }
     }
 
+    /**
+     * Manually moves a ledger account's balance — a fresh draw on a credit line, a repayment that
+     * never arrived as an SMS, or a correction. Same manual-entry precedent as cash on hand:
+     * the user is asserting the figure, so it's applied directly rather than inferred.
+     */
+    fun adjustLedgerBalance(id: String, delta: BigDecimal) {
+        viewModelScope.launch {
+            val existing = app.database.ledgerAccountDao().getById(id) ?: return@launch
+            val updated = (existing.balance + delta).coerceAtLeast(BigDecimal.ZERO)
+            app.database.ledgerAccountDao().upsert(existing.copy(balance = updated))
+        }
+    }
+
     fun updateManualAsset(id: String, name: String, value: BigDecimal) {
         viewModelScope.launch {
             val existing = app.database.ledgerAccountDao().getById(id) ?: return@launch

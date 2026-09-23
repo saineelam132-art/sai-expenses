@@ -140,9 +140,11 @@ class TypeInferenceEngine(
             normalizedPayee.contains(variant) || variant.contains(normalizedPayee)
         }
 
+        val sliceLoanId = resolveSliceAccountId()
+
         if (!isSelfPayee) {
             // Spent via the credit line on a merchant: a real Expense, still funded by Slice.
-            return InferredKind(TransactionKind.EXPENSE, loanId = SLICE_LEDGER_ACCOUNT_ID)
+            return InferredKind(TransactionKind.EXPENSE, loanId = sliceLoanId)
         }
 
         // Sent to myself: this is the loan proceeds landing somewhere — look for a same-amount
@@ -151,8 +153,23 @@ class TypeInferenceEngine(
         // same-bank transfer), and flag for manual confirmation if nothing matches rather than
         // silently guessing which account received it.
         val match = candidate.accountId?.let { findMatchingTransaction(candidate, amount, SLICE_MATCH_WINDOW_MINUTES) }
-        return InferredKind(TransactionKind.LOAN_DISBURSED, loanId = SLICE_LEDGER_ACCOUNT_ID, forceNeedsReview = match == null)
+        return InferredKind(TransactionKind.LOAN_DISBURSED, loanId = sliceLoanId, forceNeedsReview = match == null)
     }
+
+    /**
+     * Which ledger account Slice transactions post to — looked up by name rather than assuming
+     * [SLICE_LEDGER_ACCOUNT_ID], because a Slice loan the user entered in Setup gets a generated
+     * id. Posting to the seeded id regardless is what left the user's own Slice row frozen while
+     * an invisible second one absorbed every transaction.
+     */
+    private suspend fun resolveSliceAccountId(): String =
+        ledgerAccountDao.getAllOnce()
+            .firstOrNull {
+                it.category == LedgerAccountCategory.LOAN &&
+                    it.name.trim().equals("slice", ignoreCase = true)
+            }
+            ?.id
+            ?: SLICE_LEDGER_ACCOUNT_ID
 
     private suspend fun findMatchingTransaction(candidate: TransactionEntity, amount: BigDecimal, windowMinutes: Long): TransactionEntity? {
         val accountId = candidate.accountId ?: return null

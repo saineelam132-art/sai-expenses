@@ -49,10 +49,22 @@ class TransactionListViewModel(private val app: ExpenseTrackerApp) : ViewModel()
         app.database.transactionDao().observeNeedsReviewCount()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
+    val customCategories: StateFlow<List<String>> =
+        app.database.customCategoryDao().observeAll()
+            .map { list -> list.map { it.name } }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     fun correctCategory(transaction: TransactionEntity, category: Category) {
         viewModelScope.launch {
-            runCatching { app.transactionRepository.correctCategory(transaction, category) }
+            runCatching { app.transactionRepository.correctCategory(app, transaction, category) }
                 .onFailure { CrashLog.record(app, "correctCategory", it) }
+        }
+    }
+
+    fun setCustomCategory(transaction: TransactionEntity, name: String) {
+        viewModelScope.launch {
+            runCatching { app.transactionRepository.setCustomCategory(transaction, name) }
+                .onFailure { CrashLog.record(app, "setCustomCategory", it) }
         }
     }
 

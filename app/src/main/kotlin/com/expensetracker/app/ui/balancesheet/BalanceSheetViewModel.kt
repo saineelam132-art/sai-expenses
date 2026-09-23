@@ -54,12 +54,20 @@ class BalanceSheetViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
     private fun buildState() = combine(
         app.database.accountDao().observeAll(),
         app.database.ledgerAccountDao().observeAll(),
-    ) { bankAccounts, ledgerAccounts ->
-        // Bank balances are SMS ground truth; everything else comes from LedgerPostingEngine's
-        // running totals. Net worth is always the live sum of both — never a stored/overridable
-        // number — so it can't drift from what the underlying accounts actually show.
+        app.database.accountDao().observeBalanceDeltas(),
+    ) { bankAccounts, ledgerAccounts, deltas ->
+        // A bank balance is the last figure the bank itself reported plus every transaction since
+        // (see AccountEntity) — without that addition, an account whose bank omits balances on
+        // debits would sit frozen here while its transactions piled up. Everything else comes
+        // from LedgerPostingEngine's running totals. Net worth is always the live sum of both —
+        // never a stored or overridable number — so it can't drift from the accounts beneath it.
+        val deltaByAccount = deltas.associate { it.accountId to it.delta }
         val bankAssetRows = bankAccounts.map {
-            BalanceSheetRow("${it.bankLabel} ••${it.lastFourDigits ?: "----"}", it.latestBalance?.toDouble() ?: 0.0)
+            val anchored = it.latestBalance?.toDouble() ?: 0.0
+            BalanceSheetRow(
+                "${it.bankLabel} ••${it.lastFourDigits ?: "----"}",
+                anchored + (deltaByAccount[it.id] ?: 0.0),
+            )
         }
         val ledgerAssetRows = ledgerAccounts.filter { it.side == LedgerSide.ASSET }
             .map { BalanceSheetRow(it.name, it.balance.toDouble()) }
