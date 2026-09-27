@@ -14,8 +14,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.math.BigDecimal
 import java.time.LocalDate
@@ -102,6 +105,35 @@ class DashboardViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
         }
     }
 
+    /** Sectors the user has invented, offered alongside the built-in ones in manual entry. */
+    val customCategories: StateFlow<List<String>> =
+        app.database.customCategoryDao().observeAll()
+            .map { list -> list.map { it.name } }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun addManualTransaction(
+        amount: BigDecimal,
+        kind: TransactionKind,
+        category: Category,
+        customCategory: String?,
+        merchant: String?,
+        note: String?,
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                app.transactionRepository.recordManualTransaction(
+                    context = app,
+                    amount = amount,
+                    kind = kind,
+                    category = category,
+                    customCategory = customCategory,
+                    merchant = merchant,
+                    note = note,
+                )
+            }.onFailure { CrashLog.record(app, "addManualTransaction", it) }
+        }
+    }
+
     private fun buildState(): Flow<DashboardUiState> {
         val (start, end) = monthRange(LocalDate.now())
         return combine(
@@ -132,7 +164,10 @@ class DashboardViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
                     .firstOrNull { it.category == LedgerAccountCategory.CASH }?.balance ?: BigDecimal.ZERO,
                 cashFlow = CashFlow(
                     incoming = totals[TransactionKind.INCOME] ?: 0.0,
-                    outgoing = totals[TransactionKind.EXPENSE] ?: 0.0,
+                    // Spending from either pot counts as going out; the excluded kinds
+                    // (self-transfer, lending, loan draws) are simply never read here.
+                    outgoing = (totals[TransactionKind.EXPENSE] ?: 0.0) +
+                        (totals[TransactionKind.CASH_SPEND] ?: 0.0),
                     invested = invested,
                 ),
                 // Grouped by what's displayed, so two rows that show the same sector name (a

@@ -44,6 +44,7 @@ fun SetupScreen(factory: AppViewModelFactory) {
     val manualAssets by viewModel.manualAssets.collectAsState()
     val contacts by viewModel.contacts.collectAsState()
     val ownNameVariants by viewModel.ownNameVariants.collectAsState()
+    val creditLine by viewModel.creditLine.collectAsState()
 
     LazyColumn(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { SectionTitle("Your name") }
@@ -59,6 +60,37 @@ fun SetupScreen(factory: AppViewModelFactory) {
         item { HorizontalDivider() }
         item { SectionTitle("Cash on hand") }
         item { CashBalanceRow(cashBalance, onSave = viewModel::setCashBalance) }
+
+        item { HorizontalDivider() }
+        item { SectionTitle("Credit line") }
+        item {
+            val slice = creditLine
+            if (slice == null) {
+                Text(
+                    "Slice appears here once it's set up.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            } else {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(slice.name, fontWeight = FontWeight.Bold)
+                            Text("Owed: ${slice.balance.toPlainString()}", fontWeight = FontWeight.Bold)
+                        }
+                        Text(
+                            "A revolving credit line: one running balance that every draw adds to " +
+                                "and every repayment reduces. There's only ever one of these.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        BalanceAdjustRow(
+                            increaseLabel = "Record draw",
+                            decreaseLabel = "Record repayment",
+                            onAdjust = { viewModel.adjustLedgerBalance(slice.id, it) },
+                        )
+                    }
+                }
+            }
+        }
 
         item { HorizontalDivider() }
         item { SectionTitle("Loans") }

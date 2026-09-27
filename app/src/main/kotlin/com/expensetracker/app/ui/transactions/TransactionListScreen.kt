@@ -35,6 +35,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.collectAsLazyPagingItems
+import com.expensetracker.app.accounting.SLICE_LEDGER_ACCOUNT_ID
 import com.expensetracker.app.data.db.ContactEntity
 import com.expensetracker.app.data.db.LedgerAccountEntity
 import com.expensetracker.app.data.db.TransactionEntity
@@ -126,6 +127,7 @@ fun TransactionListScreen(factory: AppViewModelFactory, initialTransactionId: Lo
                 viewModel.correctKind(transaction, kind, contactId, loanId)
                 editingKind = null
             },
+            onAddContact = { viewModel.addContact(it) },
         )
     }
 
@@ -362,6 +364,34 @@ private fun NoteEditorDialog(transaction: TransactionEntity, onDismiss: () -> Un
     )
 }
 
+/**
+ * One manually-pickable transaction type. [label] is phrased the way the action is thought about
+ * ("Borrowed from Friend") rather than in ledger terms ("Borrowed"); [fixedLoanId] pins the
+ * choice to a specific account, which is how "Loan Taken from Slice" skips the loan picker.
+ */
+private data class KindOption(
+    val label: String,
+    val kind: TransactionKind,
+    val fixedLoanId: String? = null,
+)
+
+private val kindOptions = listOf(
+    KindOption("Expense", TransactionKind.EXPENSE),
+    KindOption("Income", TransactionKind.INCOME),
+    KindOption("Self Transaction", TransactionKind.SELF_TRANSFER),
+    KindOption("Borrowed from Friend", TransactionKind.BORROWED),
+    KindOption("Repaid Friend", TransactionKind.I_REPAID_FRIEND),
+    KindOption("Lent to Friend", TransactionKind.LENT),
+    KindOption("Friend Repaid Me", TransactionKind.FRIEND_REPAID_ME),
+    KindOption("Loan Taken from Slice", TransactionKind.LOAN_DISBURSED, fixedLoanId = SLICE_LEDGER_ACCOUNT_ID),
+    KindOption("Loan Taken (other)", TransactionKind.LOAN_DISBURSED),
+    KindOption("Loan Repaid", TransactionKind.LOAN_REPAYMENT),
+    KindOption("Investment Buy", TransactionKind.INVESTMENT_BUY),
+    KindOption("Investment Sell", TransactionKind.INVESTMENT_SELL),
+    KindOption("Cash Withdrawal", TransactionKind.CASH_WITHDRAWAL),
+    KindOption("Cash Deposit", TransactionKind.CASH_DEPOSIT),
+)
+
 @Composable
 private fun KindPickerDialog(
     transaction: TransactionEntity,
@@ -369,59 +399,76 @@ private fun KindPickerDialog(
     loans: List<LedgerAccountEntity>,
     onDismiss: () -> Unit,
     onConfirm: (TransactionKind, contactId: String?, loanId: String?) -> Unit,
+    onAddContact: (String) -> Unit,
 ) {
-    // Two-step for kinds that need a contact/loan: pick the kind, then pick which one — rather
-    // than one giant list mixing kinds and linkage targets.
-    var pendingKind by remember { mutableStateOf<TransactionKind?>(null) }
+    // Two-step for types that need a contact or loan: pick the type, then pick which one, rather
+    // than one long list mixing types with linkage targets.
+    var pending by remember { mutableStateOf<KindOption?>(null) }
+    var newFriend by remember { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            val kind = pendingKind
+            val option = pending
             Text(
                 when {
-                    kind != null && kind.requiresContact -> "Which friend?"
-                    kind != null && kind.requiresLoan -> "Which loan?"
+                    option != null && option.kind.requiresContact -> "Which friend?"
+                    option != null && option.kind.requiresLoan -> "Which loan?"
                     else -> "Transaction type: ${transaction.merchant ?: "this transaction"}"
                 },
             )
         },
         text = {
-            Column {
-                val kind = pendingKind
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                val option = pending
                 when {
-                    kind == null -> {
-                        TransactionKind.entries.forEach { candidate ->
+                    option == null -> {
+                        kindOptions.forEach { candidate ->
                             TextButton(
                                 onClick = {
-                                    if (candidate.requiresContact || candidate.requiresLoan) {
-                                        pendingKind = candidate
+                                    val needsPick = (candidate.kind.requiresContact) ||
+                                        (candidate.kind.requiresLoan && candidate.fixedLoanId == null)
+                                    if (needsPick) {
+                                        pending = candidate
                                     } else {
-                                        onConfirm(candidate, null, null)
+                                        onConfirm(candidate.kind, null, candidate.fixedLoanId)
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
-                            ) { Text(candidate.displayName, modifier = Modifier.fillMaxWidth()) }
+                            ) { Text(candidate.label, modifier = Modifier.fillMaxWidth()) }
                         }
                     }
-                    kind.requiresContact -> {
-                        if (contacts.isEmpty()) {
-                            Text("No friends added yet — add one in Settings first.", style = MaterialTheme.typography.bodySmall)
-                        }
+                    option.kind.requiresContact -> {
+                        // Always asked, never inferred from the payee name — getting the wrong
+                        // friend silently moves money against the wrong person's balance.
                         contacts.forEach { contact ->
-                            TextButton(onClick = { onConfirm(kind, contact.id, null) }, modifier = Modifier.fillMaxWidth()) {
-                                Text(contact.name, modifier = Modifier.fillMaxWidth())
-                            }
+                            TextButton(
+                                onClick = { onConfirm(option.kind, contact.id, null) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text(contact.name, modifier = Modifier.fillMaxWidth()) }
                         }
+                        HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                        OutlinedTextField(
+                            value = newFriend,
+                            onValueChange = { newFriend = it },
+                            label = { Text("New friend's name") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        TextButton(
+                            onClick = { if (newFriend.isNotBlank()) onAddContact(newFriend.trim()) },
+                            enabled = newFriend.isNotBlank(),
+                        ) { Text("Add friend") }
                     }
-                    kind.requiresLoan -> {
+                    else -> {
                         if (loans.isEmpty()) {
-                            Text("No loans added yet — add one in Settings first.", style = MaterialTheme.typography.bodySmall)
+                            Text("No loans set up yet — add one in Setup first.", style = MaterialTheme.typography.bodySmall)
                         }
                         loans.forEach { loan ->
-                            TextButton(onClick = { onConfirm(kind, null, loan.id) }, modifier = Modifier.fillMaxWidth()) {
-                                Text(loan.name, modifier = Modifier.fillMaxWidth())
-                            }
+                            TextButton(
+                                onClick = { onConfirm(option.kind, null, loan.id) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text(loan.name, modifier = Modifier.fillMaxWidth()) }
                         }
                     }
                 }

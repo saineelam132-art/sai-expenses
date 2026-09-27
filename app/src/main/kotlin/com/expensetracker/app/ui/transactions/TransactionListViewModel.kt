@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 private const val PAGE_SIZE = 20
 
@@ -71,10 +72,26 @@ class TransactionListViewModel(private val app: ExpenseTrackerApp) : ViewModel()
     val contacts: StateFlow<List<ContactEntity>> =
         app.database.contactDao().observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    /** Everything a repayment can be made against — scheduled loans and the Slice credit line,
+     * since "Loan Repaid" has to be able to pay down either. */
     val loans: StateFlow<List<LedgerAccountEntity>> =
         app.database.ledgerAccountDao().observeAll()
-            .map { it.filter { a -> a.category == LedgerAccountCategory.LOAN } }
+            .map {
+                it.filter { a ->
+                    a.category == LedgerAccountCategory.LOAN || a.category == LedgerAccountCategory.CREDIT_LINE
+                }
+            }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun addContact(name: String) {
+        viewModelScope.launch {
+            runCatching {
+                app.database.contactDao().upsert(
+                    ContactEntity(id = UUID.randomUUID().toString(), name = name, knownIdentifiers = ""),
+                )
+            }.onFailure { CrashLog.record(app, "addContact", it) }
+        }
+    }
 
     fun correctKind(transaction: TransactionEntity, kind: TransactionKind, contactId: String?, loanId: String?) {
         viewModelScope.launch {

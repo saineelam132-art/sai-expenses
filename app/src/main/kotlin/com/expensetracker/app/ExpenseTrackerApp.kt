@@ -64,7 +64,8 @@ class ExpenseTrackerApp : Application() {
         // so the capture pipeline never races an empty cache.
         val keywordRules = runBlocking(Dispatchers.IO) {
             merchantRuleStore.preload()
-            ensureSliceLedgerAccountSeeded(database.ledgerAccountDao(), database.transactionDao())
+            ensureSingleSliceCreditLine(database.ledgerAccountDao(), database.transactionDao())
+            migrateRentEmiCategory(database.transactionDao())
             loadOrSeedKeywordRules(database.keywordRuleDao())
         }
         categoryEngine = CategoryEngine(keywordRules, merchantRuleStore)
@@ -98,47 +99,57 @@ class ExpenseTrackerApp : Application() {
 }
 
 /**
- * Slice is a credit line, not a real bank account — there's no SMS balance to seed it from, so
- * unlike bank accounts it must exist before the first Slice transaction is posted, or
- * [LedgerPostingEngine]'s "no linked loan yet — nothing to post" safety check (correct for a
- * user-added loan that genuinely doesn't exist yet) would silently no-op every Slice posting too.
+ * Guarantees **exactly one** Slice record, for the life of the app, under the fixed id
+ * [SLICE_LEDGER_ACCOUNT_ID].
  *
- * It also **merges duplicates**. Seeding created a row with the fixed id "slice" while adding a
- * loan called Slice in Setup created a second one under a random id, so the balance sheet showed
- * two Slice entries and transactions moved the one the user wasn't looking at. The user's own row
- * wins (their entered balance is the real opening figure), every transaction pointing at a
- * discarded row is repointed, and the leftovers are deleted.
+ * Slice is a revolving credit line, not a fixed-schedule loan, so it is stored as its own
+ * [LedgerAccountCategory.CREDIT_LINE] record that every draw adds to and every repayment
+ * subtracts from. Modelling it as a LOAN is what allowed a second record to appear beside the
+ * first (Setup's "add a loan" mints a fresh id, and the app separately seeded its own), leaving
+ * the balance sheet showing several Slice lines instead of one running total.
+ *
+ * Anything that looks like Slice — the seeded id, or any ledger account whose name mentions it —
+ * is folded into that single record with the balances **summed**, so an install that already
+ * accumulated duplicates ends up with one correct figure rather than needing a reinstall. Their
+ * transactions are repointed first so nothing is orphaned, and loan-document fields are carried
+ * over from whichever duplicate had them.
  */
-private suspend fun ensureSliceLedgerAccountSeeded(
+private suspend fun ensureSingleSliceCreditLine(
     ledgerAccountDao: LedgerAccountDao,
     transactionDao: TransactionDao,
 ) {
-    val sliceAccounts = ledgerAccountDao.getAllOnce().filter {
-        it.category == LedgerAccountCategory.LOAN && it.name.trim().equals("slice", ignoreCase = true)
+    val all = ledgerAccountDao.getAllOnce()
+    val sliceRecords = all.filter {
+        it.id == SLICE_LEDGER_ACCOUNT_ID || it.name.contains("slice", ignoreCase = true)
     }
 
-    if (sliceAccounts.isEmpty()) {
-        ledgerAccountDao.upsert(
-            LedgerAccountEntity(
-                id = SLICE_LEDGER_ACCOUNT_ID,
-                name = "Slice",
-                side = LedgerSide.LIABILITY,
-                category = LedgerAccountCategory.LOAN,
-                balance = BigDecimal.ZERO,
-            ),
-        )
-        return
-    }
+    val merged = LedgerAccountEntity(
+        id = SLICE_LEDGER_ACCOUNT_ID,
+        name = "Slice",
+        side = LedgerSide.LIABILITY,
+        category = LedgerAccountCategory.CREDIT_LINE,
+        balance = sliceRecords.fold(BigDecimal.ZERO) { sum, it -> sum + it.balance },
+        loanAccountNumber = sliceRecords.firstNotNullOfOrNull { it.loanAccountNumber },
+        interestRatePercent = sliceRecords.firstNotNullOfOrNull { it.interestRatePercent },
+        aprPercent = sliceRecords.firstNotNullOfOrNull { it.aprPercent },
+        penalChargeTerms = sliceRecords.firstNotNullOfOrNull { it.penalChargeTerms },
+        foreclosureChargeTerms = sliceRecords.firstNotNullOfOrNull { it.foreclosureChargeTerms },
+        createdAt = sliceRecords.minOfOrNull { it.createdAt } ?: System.currentTimeMillis(),
+    )
+    ledgerAccountDao.upsert(merged)
 
-    // Prefer a row the user set up themselves (it carries their opening balance and loan terms)
-    // over the placeholder the app seeded; between equals, the larger balance.
-    val survivor = sliceAccounts.sortedWith(
-        compareByDescending<LedgerAccountEntity> { it.id != SLICE_LEDGER_ACCOUNT_ID }
-            .thenByDescending { it.balance },
-    ).first()
-
-    sliceAccounts.filter { it.id != survivor.id }.forEach { duplicate ->
-        transactionDao.repointLinkedLoan(duplicate.id, survivor.id)
+    sliceRecords.filter { it.id != SLICE_LEDGER_ACCOUNT_ID }.forEach { duplicate ->
+        transactionDao.repointLinkedLoan(duplicate.id, SLICE_LEDGER_ACCOUNT_ID)
         ledgerAccountDao.delete(duplicate.id)
     }
+}
+
+/**
+ * One-time cleanup for the sector formerly called "Rent/EMI". EMI payments are a Loan-Repayment
+ * kind rather than a spending sector, so the sector is now just Rent — but rows captured under
+ * the old constant would otherwise read back as Untagged, since the converter discards names it
+ * doesn't recognise.
+ */
+private suspend fun migrateRentEmiCategory(transactionDao: TransactionDao) {
+    transactionDao.renameStoredCategory("RENT_EMI", "RENT")
 }

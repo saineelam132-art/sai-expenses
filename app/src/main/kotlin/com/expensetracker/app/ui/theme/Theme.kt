@@ -86,7 +86,7 @@ object SectorColors {
         Category.ENTERTAINMENT to slots[5],
         Category.SUBSCRIPTIONS to slots[6],
         Category.HEALTH to slots[7],
-        Category.RENT_EMI to slots[8],
+        Category.RENT to slots[8],
         Category.EDUCATION to slots[9],
         Category.INVESTMENTS to slots[10],
         Category.MISCELLANEOUS to slots[11],

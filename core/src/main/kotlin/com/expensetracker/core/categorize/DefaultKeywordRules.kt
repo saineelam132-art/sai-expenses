@@ -92,12 +92,11 @@ object DefaultKeywordRules {
         "pharmacy" to Category.HEALTH,
 
         // Rent/EMI
-        "rent" to Category.RENT_EMI,
-        "landlord" to Category.RENT_EMI,
-        "emi" to Category.RENT_EMI,
-        "housing finance" to Category.RENT_EMI,
-        "bajaj finserv" to Category.RENT_EMI,
-        "home loan" to Category.RENT_EMI,
+        "rent" to Category.RENT,
+        "landlord" to Category.RENT,
+        "housing finance" to Category.RENT,
+        "bajaj finserv" to Category.RENT,
+        "home loan" to Category.RENT,
 
         // Subscriptions
         "netflix" to Category.SUBSCRIPTIONS,

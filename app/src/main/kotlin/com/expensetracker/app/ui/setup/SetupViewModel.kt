@@ -58,6 +58,12 @@ class SetupViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
         .map { it.filter { a -> a.category == LedgerAccountCategory.LOAN } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    /** The single Slice record. Shown apart from Loans so it can't be duplicated by "add a loan",
+     * and because a revolving line has no schedule to enter. */
+    val creditLine: StateFlow<LedgerAccountEntity?> = ledgerAccounts
+        .map { it.firstOrNull { a -> a.category == LedgerAccountCategory.CREDIT_LINE } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
     val manualAssets: StateFlow<List<LedgerAccountEntity>> = ledgerAccounts
         .map { it.filter { a -> a.category == LedgerAccountCategory.MANUAL_ASSET } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())

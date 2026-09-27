@@ -14,7 +14,24 @@ enum class LedgerSide { ASSET, LIABILITY }
  * (ground truth), not computed. Everything in *this* table is a bucket this app computes/tracks
  * itself because no bank SMS reports it directly.
  */
-enum class LedgerAccountCategory { CASH, INVESTMENTS, LOAN, RECEIVABLE, PAYABLE, MANUAL_ASSET }
+enum class LedgerAccountCategory {
+    CASH,
+    INVESTMENTS,
+
+    /** A fixed-schedule loan: a known principal repaid over an installment table. */
+    LOAN,
+
+    /**
+     * A revolving credit line (Slice): one persistent record with a single running "amount owed",
+     * drawn on and repaid repeatedly with no installment schedule. Deliberately distinct from
+     * [LOAN] — treating it as a loan is what let a second Slice record be created alongside the
+     * first, and what sent its repayments through schedule matching that could never match.
+     */
+    CREDIT_LINE,
+    RECEIVABLE,
+    PAYABLE,
+    MANUAL_ASSET,
+}
 
 /**
  * One asset or liability bucket outside the SMS-tracked bank accounts: cash on hand, the

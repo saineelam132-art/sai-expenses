@@ -61,14 +61,15 @@ interface TransactionDao {
     // spending in any sector and must not inflate these figures (see TransactionKind).
     @Query(
         """SELECT category, customCategory, SUM(CAST(amount AS REAL)) as total FROM transactions
-           WHERE kind = 'EXPENSE' AND transactionDateTime BETWEEN :startEpochMillis AND :endEpochMillis
+           WHERE kind IN ('EXPENSE', 'CASH_SPEND')
+             AND transactionDateTime BETWEEN :startEpochMillis AND :endEpochMillis
            GROUP BY category, customCategory""",
     )
     fun observeSectorSpend(startEpochMillis: Long, endEpochMillis: Long): Flow<List<SectorSpend>>
 
     @Query(
         """SELECT COALESCE(SUM(CAST(amount AS REAL)), 0) FROM transactions
-           WHERE kind = 'EXPENSE' AND category = :category
+           WHERE kind IN ('EXPENSE', 'CASH_SPEND') AND category = :category
            AND transactionDateTime BETWEEN :startEpochMillis AND :endEpochMillis""",
     )
     suspend fun sumSpendForCategory(category: Category, startEpochMillis: Long, endEpochMillis: Long): Double
@@ -140,6 +141,11 @@ interface TransactionDao {
     /** Moves transactions from a ledger account being merged away onto the one that survives. */
     @Query("UPDATE transactions SET linkedLoanId = :newLoanId WHERE linkedLoanId = :oldLoanId")
     suspend fun repointLinkedLoan(oldLoanId: String, newLoanId: String)
+
+    /** Rewrites a stored category name after the enum constant behind it was renamed, so existing
+     * rows don't silently read back as Untagged. */
+    @Query("UPDATE transactions SET category = :newName WHERE category = :oldName")
+    suspend fun renameStoredCategory(oldName: String, newName: String)
 
     /**
      * Removes the one-time processing/insurance charges logged when a loan was set up, so

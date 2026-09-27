@@ -1,5 +1,6 @@
 package com.expensetracker.app.ui.balancesheet
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.expensetracker.app.ExpenseTrackerApp
@@ -75,10 +76,28 @@ class BalanceSheetViewModel(private val app: ExpenseTrackerApp) : ViewModel() {
             .map { BalanceSheetRow(it.name, it.balance.toDouble()) }
 
         val assets = bankAssetRows + ledgerAssetRows
+        val assetTotal = assets.sumOf { it.balance }
+        val liabilityTotal = liabilityRows.sumOf { it.balance }
+
+        // Raw totals as computed, before anything is rendered: if the screen still looks wrong,
+        // this says whether the numbers arrived wrong or were displayed wrong.
+        Log.d(
+            LOG_TAG,
+            "assets=$assetTotal (${bankAssetRows.size} bank + ${ledgerAssetRows.size} ledger) " +
+                "liabilities=$liabilityTotal (${liabilityRows.size} rows) " +
+                "netWorth=${assetTotal - liabilityTotal} | " +
+                "bank=${bankAssetRows.joinToString { "${it.name}:${it.balance}" }} | " +
+                "ledger=${(ledgerAssetRows + liabilityRows).joinToString { "${it.name}:${it.balance}" }}",
+        )
+
         BalanceSheetUiState(
             assets = assets,
             liabilities = liabilityRows,
-            netWorth = assets.sumOf { it.balance } - liabilityRows.sumOf { it.balance },
+            netWorth = assetTotal - liabilityTotal,
         )
+    }
+
+    private companion object {
+        const val LOG_TAG = "BalanceSheet"
     }
 }

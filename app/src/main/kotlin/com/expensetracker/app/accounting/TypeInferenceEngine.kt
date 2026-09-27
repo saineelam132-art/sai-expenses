@@ -157,19 +157,11 @@ class TypeInferenceEngine(
     }
 
     /**
-     * Which ledger account Slice transactions post to — looked up by name rather than assuming
-     * [SLICE_LEDGER_ACCOUNT_ID], because a Slice loan the user entered in Setup gets a generated
-     * id. Posting to the seeded id regardless is what left the user's own Slice row frozen while
-     * an invisible second one absorbed every transaction.
+     * Slice transactions always post to the one credit-line record under
+     * [SLICE_LEDGER_ACCOUNT_ID] — startup guarantees it exists and that any duplicates have been
+     * merged into it, so there is no lookup to get wrong and no way to mint a second one.
      */
-    private suspend fun resolveSliceAccountId(): String =
-        ledgerAccountDao.getAllOnce()
-            .firstOrNull {
-                it.category == LedgerAccountCategory.LOAN &&
-                    it.name.trim().equals("slice", ignoreCase = true)
-            }
-            ?.id
-            ?: SLICE_LEDGER_ACCOUNT_ID
+    private fun resolveSliceAccountId(): String = SLICE_LEDGER_ACCOUNT_ID
 
     private suspend fun findMatchingTransaction(candidate: TransactionEntity, amount: BigDecimal, windowMinutes: Long): TransactionEntity? {
         val accountId = candidate.accountId ?: return null

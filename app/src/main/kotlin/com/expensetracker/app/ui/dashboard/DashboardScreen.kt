@@ -6,6 +6,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -30,6 +33,8 @@ import com.expensetracker.app.ui.charts.SectorBarChart
 import com.expensetracker.app.ui.charts.SectorDonutChart
 import com.expensetracker.app.ui.charts.foldTail
 import com.expensetracker.app.ui.theme.SectorColors
+import com.expensetracker.core.model.Category
+import com.expensetracker.core.model.TransactionKind
 import java.math.BigDecimal
 import java.text.NumberFormat
 import java.util.Locale
@@ -45,6 +50,8 @@ fun DashboardScreen(factory: AppViewModelFactory) {
     val viewModel: DashboardViewModel = viewModel(factory = factory)
     val state by viewModel.uiState.collectAsState()
     val inr = remember { NumberFormat.getCurrencyInstance(Locale("en", "IN")) }
+    val customCategories by viewModel.customCategories.collectAsState()
+    var showManualEntry by remember { mutableStateOf(false) }
 
     // Top sectors keep their own color; the tail folds into one "Other" slice so the donut never
     // shows more colors at once than the palette is validated for.
@@ -59,9 +66,27 @@ fun DashboardScreen(factory: AppViewModelFactory) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item { BalanceCard(state, inr) }
-        item { CashFlowCard(state, inr, onSaveCash = viewModel::setCashOnHand) }
+        item {
+            CashFlowCard(
+                state,
+                inr,
+                onSaveCash = viewModel::setCashOnHand,
+                onLogSpend = { showManualEntry = true },
+            )
+        }
         item { SpendingSummaryCard(state, inr) }
         item { SpendBySectorCard(slices, state.monthTotalSpend, inr) }
+    }
+
+    if (showManualEntry) {
+        ManualEntryDialog(
+            customCategories = customCategories,
+            onDismiss = { showManualEntry = false },
+            onSubmit = { amount, kind, category, custom, merchant, note ->
+                viewModel.addManualTransaction(amount, kind, category, custom, merchant, note)
+                showManualEntry = false
+            },
+        )
     }
 }
 
@@ -106,7 +131,12 @@ private fun BalanceCard(state: DashboardUiState, inr: NumberFormat) {
 }
 
 @Composable
-private fun CashFlowCard(state: DashboardUiState, inr: NumberFormat, onSaveCash: (BigDecimal) -> Unit) {
+private fun CashFlowCard(
+    state: DashboardUiState,
+    inr: NumberFormat,
+    onSaveCash: (BigDecimal) -> Unit,
+    onLogSpend: () -> Unit,
+) {
     SectionCard {
         Text("Cash flow this month", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Text(
@@ -122,7 +152,7 @@ private fun CashFlowCard(state: DashboardUiState, inr: NumberFormat, onSaveCash:
         FlowRow("Left", inr.format(state.cashFlow.left), emphasize = true)
 
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
-        CashOnHandField(state.cashOnHand, onSaveCash)
+        CashOnHandField(state.cashOnHand, onSaveCash, onLogSpend)
     }
 }
 
@@ -148,11 +178,14 @@ private fun FlowRow(label: String, value: String, emphasize: Boolean = false) {
 }
 
 /** Cash on hand lives inside the cash-flow card because it is the one balance no SMS reports —
- * it only changes when the user says so. */
+ * it only changes when the user says so, either by correcting the figure or by logging a spend. */
 @Composable
-private fun CashOnHandField(current: BigDecimal, onSave: (BigDecimal) -> Unit) {
+private fun CashOnHandField(current: BigDecimal, onSave: (BigDecimal) -> Unit, onLogSpend: () -> Unit) {
     var text by remember(current) { mutableStateOf(current.toPlainString()) }
-    Text("Cash on hand", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Text("Cash on hand", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+        TextButton(onClick = onLogSpend) { Text("+ Log cash spend") }
+    }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         OutlinedTextField(
             value = text,
@@ -167,6 +200,119 @@ private fun CashOnHandField(current: BigDecimal, onSave: (BigDecimal) -> Unit) {
         }) { Text("Save") }
     }
 }
+
+/**
+ * Manual entry — the one legitimate hand-written path. Defaults to a cash expense (what it's
+ * reached from), but the type picker covers anything the capture pipeline missed, and the
+ * category box accepts a sector that isn't in the list.
+ */
+@Composable
+private fun ManualEntryDialog(
+    customCategories: List<String>,
+    onDismiss: () -> Unit,
+    onSubmit: (amount: BigDecimal, kind: TransactionKind, category: Category, custom: String?, merchant: String?, note: String?) -> Unit,
+) {
+    var amount by remember { mutableStateOf("") }
+    var merchant by remember { mutableStateOf("") }
+    var note by remember { mutableStateOf("") }
+    var typedCategory by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf(Category.FOOD_DINING) }
+    var selectedKind by remember { mutableStateOf(TransactionKind.CASH_SPEND) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Log a transaction") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                OutlinedTextField(
+                    value = amount,
+                    onValueChange = { amount = it },
+                    label = { Text("Amount (₹)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = merchant,
+                    onValueChange = { merchant = it },
+                    label = { Text("Paid to / received from") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                Text("Type", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 8.dp))
+                manualKinds.forEach { (label, kind) ->
+                    TextButton(onClick = { selectedKind = kind }, modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            if (selectedKind == kind) "✓ $label" else label,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+
+                Text("Category", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 8.dp))
+                (Category.entries.filter { it != Category.UNCATEGORIZED }.map { it.displayName to it } +
+                    customCategories.map { it to null })
+                    .forEach { (label, category) ->
+                        TextButton(
+                            onClick = {
+                                if (category != null) {
+                                    selectedCategory = category
+                                    typedCategory = ""
+                                } else {
+                                    typedCategory = label
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            val chosen = if (category != null) typedCategory.isBlank() && selectedCategory == category
+                            else typedCategory == label
+                            Text(if (chosen) "✓ $label" else label, modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                OutlinedTextField(
+                    value = typedCategory,
+                    onValueChange = { typedCategory = it },
+                    label = { Text("Other — type your own") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = { Text("Note (optional)") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val parsed = runCatching { BigDecimal(amount.trim()) }.getOrNull()
+                if (parsed != null && parsed > BigDecimal.ZERO) {
+                    onSubmit(
+                        parsed,
+                        selectedKind,
+                        selectedCategory,
+                        typedCategory.trim().takeIf { it.isNotEmpty() },
+                        merchant.takeIf { it.isNotBlank() },
+                        note.takeIf { it.isNotBlank() },
+                    )
+                }
+            }) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** Cash spending is the common case, so it leads; the rest cover anything capture missed. */
+private val manualKinds = listOf(
+    "Cash spend" to TransactionKind.CASH_SPEND,
+    "Expense" to TransactionKind.EXPENSE,
+    "Income" to TransactionKind.INCOME,
+    "Cash deposit" to TransactionKind.CASH_DEPOSIT,
+    "Investment Buy" to TransactionKind.INVESTMENT_BUY,
+    "Investment Sell" to TransactionKind.INVESTMENT_SELL,
+)
 
 @Composable
 private fun SpendingSummaryCard(state: DashboardUiState, inr: NumberFormat) {

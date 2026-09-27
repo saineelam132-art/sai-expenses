@@ -11,6 +11,7 @@ import com.expensetracker.app.data.db.TransactionDao
 import com.expensetracker.app.data.db.TransactionEntity
 import com.expensetracker.core.categorize.CategoryEngine
 import com.expensetracker.core.model.Category
+import com.expensetracker.core.model.ParseConfidence
 import com.expensetracker.core.model.ParsedTransaction
 import com.expensetracker.core.model.TransactionKind
 import com.expensetracker.core.model.TransactionType
@@ -182,6 +183,58 @@ class TransactionRepository(
         ledgerPostingEngine.post(context, updated)
     }
 
+    /**
+     * Records a transaction the user entered by hand — cash spending above all, which no SMS
+     * ever reports, but equally anything the capture pipeline missed. It goes through the same
+     * ledger posting as a captured one, so a cash expense reduces cash on hand and lands in
+     * spending totals exactly like any other expense.
+     */
+    suspend fun recordManualTransaction(
+        context: Context,
+        amount: BigDecimal,
+        kind: TransactionKind,
+        category: Category,
+        customCategory: String?,
+        merchant: String?,
+        note: String?,
+        occurredAt: LocalDateTime = LocalDateTime.now(),
+    ): TransactionEntity {
+        val custom = customCategory?.trim()?.takeIf { it.isNotEmpty() }
+        if (custom != null && customCategoryDao.findByName(custom) == null) {
+            customCategoryDao.upsert(CustomCategoryEntity(name = custom))
+        }
+
+        val entity = TransactionEntity(
+            amount = amount,
+            // Cash leaving or arriving is still a debit/credit in the ledger's eyes; the kind is
+            // what decides which buckets move.
+            type = if (kind in CREDITING_KINDS) TransactionType.CREDIT else TransactionType.DEBIT,
+            merchant = merchant?.trim()?.takeIf { it.isNotEmpty() },
+            category = if (custom != null) Category.UNCATEGORIZED else category,
+            customCategory = custom,
+            categoryConfident = true,
+            transactionDateTime = occurredAt,
+            availableBalance = null,
+            accountId = null,
+            referenceId = null,
+            sourceLabel = MANUAL_SOURCE,
+            rawMessage = "Manual entry",
+            parseConfidence = ParseConfidence.HIGH,
+            needsReview = false,
+            isLargeTransaction = false,
+            userReviewed = true,
+            kind = kind,
+            kindConfident = true,
+            notes = note?.trim()?.takeIf { it.isNotEmpty() },
+        )
+
+        val saved = entity.copy(id = transactionDao.insert(entity))
+        // Cash-on-hand is a ledger bucket, so a manual cash spend has to post as a withdrawal
+        // from it; a plain Expense would only ever move a bank balance, which this isn't.
+        ledgerPostingEngine.post(context, saved)
+        return saved
+    }
+
     /** Sets or clears the user's free-text note on a transaction — available on any transaction,
      * auto-captured or manual, editable anytime. Purely informational: no ledger effect. */
     suspend fun setNote(transaction: TransactionEntity, note: String?) {
@@ -198,5 +251,19 @@ class TransactionRepository(
     private fun accountIdFor(parsed: ParsedTransaction): String? {
         val hint = parsed.accountHint ?: return null
         return "${parsed.sourceLabel}-$hint"
+    }
+
+    private companion object {
+        const val MANUAL_SOURCE = "Manual"
+
+        /** Manual kinds where money comes *in* rather than goes out. */
+        val CREDITING_KINDS = setOf(
+            TransactionKind.INCOME,
+            TransactionKind.BORROWED,
+            TransactionKind.FRIEND_REPAID_ME,
+            TransactionKind.LOAN_DISBURSED,
+            TransactionKind.INVESTMENT_SELL,
+            TransactionKind.CASH_DEPOSIT,
+        )
     }
 }

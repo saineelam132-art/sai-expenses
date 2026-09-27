@@ -12,6 +12,7 @@ import com.expensetracker.app.data.db.TransactionDao
 import com.expensetracker.app.data.db.TransactionEntity
 import com.expensetracker.app.diagnostics.CrashLog
 import com.expensetracker.core.loan.LoanScheduleMatcher
+import com.expensetracker.core.loan.RevolvingCredit
 import com.expensetracker.core.loan.ScheduleInstallment
 import com.expensetracker.core.model.TransactionKind
 import java.math.BigDecimal
@@ -51,6 +52,9 @@ class LedgerPostingEngine(
             when (transaction.kind) {
                 TransactionKind.CASH_WITHDRAWAL -> adjustCash(amount, sign)
                 TransactionKind.CASH_DEPOSIT -> adjustCash(amount, -sign)
+                // Spending physical cash: the only kind that takes money out of the cash bucket
+                // without a bank message on the other side.
+                TransactionKind.CASH_SPEND -> adjustCash(amount, -sign)
                 TransactionKind.INVESTMENT_BUY -> adjustInvestments(amount, sign)
                 TransactionKind.INVESTMENT_SELL -> adjustInvestments(amount, -sign)
                 TransactionKind.LOAN_DISBURSED -> adjustLoan(transaction.linkedLoanId, amount, sign)
@@ -134,6 +138,14 @@ class LedgerPostingEngine(
         val loanId = transaction.linkedLoanId ?: return
         val loan = ledgerAccountDao.getById(loanId) ?: return
         val amount = transaction.amount ?: return
+
+        // A revolving credit line has no installment table to match against — repaying it simply
+        // reduces what's owed. Sending these through schedule matching would find nothing and
+        // flag every Slice repayment for manual review while never reducing the balance.
+        if (loan.category == LedgerAccountCategory.CREDIT_LINE) {
+            save(loan.copy(balance = RevolvingCredit.apply(loan.balance, transaction.kind, amount, sign)))
+            return
+        }
 
         if (sign < 0) {
             // Reversal: give the schedule row back, and undo exactly the principal that was
